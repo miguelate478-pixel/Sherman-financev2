@@ -1,0 +1,65 @@
+/* Sherman Finance Control AI — Global Styles */
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; padding: 0; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* Animations */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes slideInRight { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
+
+/* Mobile responsive breakpoints */
+@media (max-width: 768px) {
+  /* Sidebar becomes bottom nav on mobile */
+  .sidebar { width: 100% !important; height: auto !important; flex-direction: row !important; overflow-x: auto !important; position: fixed !important; bottom: 0 !important; left: 0 !important; right: 0 !important; top: auto !important; z-index: 1000; border-right: none !important; border-top: 1px solid #E2E8F0; }
+  .sidebar-item { flex-direction: column !important; min-width: 60px !important; padding: .5rem !important; font-size: 9px !important; text-align: center; }
+  .sidebar-item-icon { font-size: 18px !important; }
+  .sidebar-label { display: block !important; }
+  .sidebar-section-label { display: none !important; }
+  
+  /* Main content adds bottom padding for mobile nav */
+  .main-content { padding-bottom: 80px !important; }
+  
+  /* Topbar on mobile */
+  .topbar-empresa-select { max-width: 120px !important; }
+  
+  /* Hide non-essential topbar items on mobile */
+  .topbar-status-badges { display: none !important; }
+  
+  /* Cards stack on mobile */
+  .grid-2col, .grid-3col, .grid-4col, .grid-5col, .grid-6col { grid-template-columns: 1fr !important; }
+  .grid-2col-mobile { grid-template-columns: 1fr 1fr !important; }
+  
+  /* Tables scroll horizontally */
+  .table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  
+  /* Font size adjustments */
+  .stat-value { font-size: 18px !important; }
+  .page-title { font-size: 18px !important; }
+}
+
+@media (max-width: 480px) {
+  .grid-2col-mobile { grid-template-columns: 1fr !important; }
+}
+
+/* Print styles */
+@media print {
+  .sidebar, .topbar, .no-print { display: none !important; }
+  .main-content { padding: 0 !important; }
+  body { background: white !important; color: black !important; }
+}
+
+/* Focus styles for accessibility */
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid #2563EB;
+  outline-offset: 2px;
+}
+
+/* Landing page font */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap');

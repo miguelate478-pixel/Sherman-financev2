@@ -1,0 +1,309 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String    @id @default(cuid())
+  name       String
+  email      String    @unique
+  password   String
+  role       String    @default("Contador")
+  mfaEnabled Boolean   @default(false)
+  status     String    @default("activo")
+  lastLogin  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  auditLogs  AuditLog[]
+  @@map("users")
+}
+
+model Company {
+  id           String    @id @default(cuid())
+  ruc          String    @unique
+  businessName String
+  tradeName    String?
+  regime       String    @default("General")
+  sector       String?
+  contactEmail String?
+  igvRate      Int       @default(18)
+  status       String    @default("activo")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  credentials  SunatCredential?
+  documents    Document[]
+  bankMovements BankMovement[]
+  bulkJobs     BulkJob[]
+  concarConn   ConcarConnection?
+  @@map("companies")
+}
+
+model SunatCredential {
+  id            String    @id @default(cuid())
+  companyId     String    @unique
+  company       Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  solUser       String
+  encryptedPass String
+  iv            String
+  authTag       String
+  clientId      String?
+  encClientSecret String?
+  provider      String    @default("mock")
+  status        String    @default("pending")
+  lastTestAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  @@map("sunat_credentials")
+}
+
+model BulkJob {
+  id          String    @id @default(cuid())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id])
+  operation   String
+  periodFrom  String
+  periodTo    String
+  periodType  String    @default("MONTHLY")
+  status      String    @default("PENDIENTE")
+  totalPeriods Int      @default(0)
+  docsFound   Int       @default(0)
+  docsXml     Int       @default(0)
+  docsPdf     Int       @default(0)
+  docsCdr     Int       @default(0)
+  errors      Int       @default(0)
+  createdBy   String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  periods     BulkJobPeriod[]
+  @@map("bulk_jobs")
+}
+
+model BulkJobPeriod {
+  id         String   @id @default(cuid())
+  jobId      String
+  job        BulkJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  period     String
+  operation  String
+  status     String   @default("PENDIENTE")
+  docsFound  Int      @default(0)
+  docsXml    Int      @default(0)
+  docsPdf    Int      @default(0)
+  docsCdr    Int      @default(0)
+  errors     Int      @default(0)
+  startedAt  DateTime?
+  completedAt DateTime?
+  createdAt  DateTime @default(now())
+  @@map("bulk_job_periods")
+}
+
+model Document {
+  id           String   @id
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id])
+  bulkJobId    String?
+  operation    String
+  docType      String
+  serie        String
+  number       String
+  issuerRuc    String
+  issuerName   String
+  receiverRuc  String
+  receiverName String
+  issueDate    String
+  dueDate      String?
+  currency     String   @default("PEN")
+  base         Float
+  igv          Float
+  total        Float
+  hasDetraction Boolean @default(false)
+  detractionPct Int?
+  detractionAmt Float?
+  sunatStatus  String   @default("PENDIENTE")
+  cdrStatus    String   @default("PENDIENTE")
+  workflow     String   @default("PENDIENTE_REVISION")
+  concarStatus String   @default("PENDIENTE")
+  hasXml       Boolean  @default(false)
+  hasPdf       Boolean  @default(false)
+  hasCdr       Boolean  @default(false)
+  xmlPath      String?
+  pdfPath      String?
+  cdrPath      String?
+  hashSha256   String?
+  period       String
+  parserStatus String   @default("PENDIENTE")
+  aiStatus     String   @default("PENDIENTE")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  lines        DocumentLine[]
+  files        DocumentFile[]
+  concarItems  ConcarBatchItem[]
+  @@map("documents")
+}
+
+model DocumentLine {
+  id           String   @id @default(cuid())
+  documentId   String
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  lineNumber   Int
+  code         String?
+  description  String
+  quantity     Float
+  unit         String   @default("ZZ")
+  unitValue    Float
+  igvAmount    Float
+  lineTotal    Float
+  affectType   String   @default("10")
+  pcgeAccount  String?
+  costCenter   String?
+  category     String?
+  iaConfidence Int      @default(0)
+  needsReview  Boolean  @default(false)
+  isRecurrent  Boolean  @default(false)
+  approved     Boolean  @default(false)
+  approvedBy   String?
+  createdAt    DateTime @default(now())
+  @@map("document_lines")
+}
+
+model DocumentFile {
+  id           String   @id @default(cuid())
+  documentId   String
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  fileType     String
+  originalName String
+  storedName   String
+  mimeType     String
+  sizeBytes    Int      @default(0)
+  storagePath  String
+  hash         String?
+  uploadedAt   DateTime @default(now())
+  @@map("document_files")
+}
+
+model BankMovement {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+  date        String
+  description String
+  type        String
+  amount      Float
+  balance     Float
+  reconciled  Boolean  @default(false)
+  matchDocId  String?
+  matchName   String?
+  createdAt   DateTime @default(now())
+  @@map("bank_movements")
+}
+
+model Detraction {
+  id          String   @id @default(cuid())
+  companyId   String
+  documentId  String
+  provider    String
+  provRuc     String
+  amount      Float
+  pct         Int
+  code        String
+  account     String
+  status      String   @default("PENDIENTE")
+  depositDate String?
+  createdAt   DateTime @default(now())
+  @@map("detractions")
+}
+
+model ConcarConnection {
+  id            String   @id @default(cuid())
+  companyId     String   @unique
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  server        String?
+  database      String?
+  encUser       String?
+  encPass       String?
+  mode          String   @default("mock")
+  status        String   @default("desconectado")
+  lastTestAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@map("concar_connections")
+}
+
+model ConcarBatch {
+  id          String   @id @default(cuid())
+  companyId   String
+  period      String
+  status      String   @default("PREPARADO")
+  docsCount   Int      @default(0)
+  exportedBy  String
+  exportedAt  DateTime?
+  hashLote    String?
+  approvedBy  String?
+  approvedAt  DateTime?
+  createdAt   DateTime @default(now())
+  items       ConcarBatchItem[]
+  @@map("concar_batches")
+}
+
+model ConcarBatchItem {
+  id         String      @id @default(cuid())
+  batchId    String
+  batch      ConcarBatch @relation(fields: [batchId], references: [id])
+  documentId String
+  document   Document    @relation(fields: [documentId], references: [id])
+  account    String?
+  costCenter String?
+  debit      Float?
+  credit     Float?
+  status     String      @default("INCLUIDO")
+  createdAt  DateTime    @default(now())
+  @@map("concar_batch_items")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  userEmail String
+  userRole  String
+  action    String
+  object    String?
+  meta      String?
+  ip        String?
+  createdAt DateTime @default(now())
+  @@map("audit_logs")
+}
+
+model CxcRecord {
+  id          String   @id @default(cuid())
+  companyId   String
+  documentId  String?
+  clientRuc   String
+  clientName  String
+  amount      Float
+  dueDate     String
+  status      String   @default("PENDIENTE")
+  paidDate    String?
+  paidAmount  Float?
+  createdAt   DateTime @default(now())
+  @@map("cxc_records")
+}
+
+model CxpRecord {
+  id          String   @id @default(cuid())
+  companyId   String
+  documentId  String?
+  providerRuc String
+  providerName String
+  amount      Float
+  dueDate     String
+  status      String   @default("PENDIENTE")
+  paidDate    String?
+  paidAmount  Float?
+  createdAt   DateTime @default(now())
+  @@map("cxp_records")
+}
