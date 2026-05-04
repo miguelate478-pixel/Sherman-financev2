@@ -125,7 +125,7 @@ export class DirectSunatProvider implements ISunatProvider {
     const c = getCached(key); if (c) return c;
     const res = await fetch(`${this.apiBase}/clientesextranet/${cId}/oauth2/token/`, {
       method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({ grant_type:'client_credentials', scope:`${this.validateBase}/contribuyente/contribuyentes`, client_id:cId, client_secret:cSecret }),
+      body: new URLSearchParams({ grant_type:'client_credentials', scope:`${this.validateBase}/contribuyente/controlcpe`, client_id:cId, client_secret:cSecret }),
     });
     if (!res.ok) {
       const body = await res.text();
@@ -144,7 +144,7 @@ export class DirectSunatProvider implements ISunatProvider {
     const c = getCached(key); if (c) return c;
     const res = await fetch(`${this.apiBase}/clientessol/${cId}/oauth2/token/`, {
       method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({ grant_type:'password', scope:this.sireBase, client_id:cId, client_secret:cSecret, username:`${ruc}${solUser}`, password:solPass }),
+      body: new URLSearchParams({ grant_type:'password', scope:`${this.validateBase}/contribuyente/migeigv`, client_id:cId, client_secret:cSecret, username:`${ruc}${solUser}`, password:solPass }),
     });
     if (!res.ok) throw new Error(`SIRE token error ${res.status}: ${await res.text()}`);
     const j = await res.json() as { access_token:string; expires_in:number };
