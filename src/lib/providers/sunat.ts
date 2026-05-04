@@ -153,7 +153,7 @@ export class DirectSunatProvider implements ISunatProvider {
   }
 
   async validateDocument(p: { ruc:string; token:string; numRuc:string; codComp:string; serie:string; numero:string; fecha:string; monto:number }): Promise<SunatValidationResult> {
-    const res = await fetch(`${this.validateBase}/contribuyente/contribuyentes/${p.ruc}/validarcomprobante`, {
+    const res = await fetch(`${this.validateBase}/contribuyente/controlcpe/${p.ruc}/validarcomprobante`, {
       method:'POST', headers:{ Authorization:`Bearer ${p.token}`, 'Content-Type':'application/json' },
       body: JSON.stringify({ numRuc:p.numRuc, codComp:p.codComp, numeroSerie:p.serie, numero:p.numero, fechaEmision:p.fecha, monto:String(p.monto) }),
     });

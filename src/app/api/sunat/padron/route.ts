@@ -25,7 +25,7 @@ async function getSunatToken(): Promise<string | null> {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type:    'client_credentials',
-        scope:         'https://api.sunat.gob.pe/v1/contribuyente/contribuyentes',
+        scope:         'https://api.sunat.gob.pe/v1/contribuyente/controlcpe',
         client_id:     clientId,
         client_secret: clientSecret,
       }),
@@ -40,7 +40,7 @@ async function getSunatToken(): Promise<string | null> {
 
 async function consultarSunatOficial(ruc: string, token: string): Promise<Record<string,unknown> | null> {
   try {
-    const res = await fetch(`https://api.sunat.gob.pe/v1/contribuyente/contribuyentes/${ruc}/validacion`, {
+    const res = await fetch(`https://api.sunat.gob.pe/v1/contribuyente/controlcpe/${ruc}/validacion`, {
       headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
       signal: AbortSignal.timeout(5000),
     });
