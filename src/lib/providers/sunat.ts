@@ -111,7 +111,7 @@ export class MockSunatProvider implements ISunatProvider {
 export class DirectSunatProvider implements ISunatProvider {
   private apiBase      = 'https://api-seguridad.sunat.gob.pe/v1';
   private validateBase = 'https://api.sunat.gob.pe/v1';
-  private sireBase     = 'https://api-sire.sunat.gob.pe/v1';
+  private sireBase     = 'https://apisire.sunat.gob.pe/v1';
 
   async getToken(clientId?: string, clientSecret?: string): Promise<string> {
     return 'no-cpe-token';
@@ -124,7 +124,7 @@ export class DirectSunatProvider implements ISunatProvider {
     const url = `https://api-seguridad.sunat.gob.pe/v1/clientessol/${cId}/oauth2/token/`;
     const params = new URLSearchParams({
       grant_type:    'password',
-      scope:         'https://api-sire.sunat.gob.pe',
+      scope:         'https://apisire.sunat.gob.pe',
       client_id:     cId,
       client_secret: cSec,
       username:      `${ruc}${solUser}`,
@@ -289,7 +289,7 @@ export class DirectSunatProvider implements ISunatProvider {
     const per = period.replace('-','');
     const ep  = tipo==='RVIE'
       ? `/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${per}/exportapropuesta?codTipoArchivo=0`
-      : `/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${per}/exportacioncomprobantepropuesta?codTipoArchivo=0`;
+      : `/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${per}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`;
     console.log(`[SIRE] Propuesta ${tipo} período ${per}: ${this.sireBase}${ep}`);
     const res = await fetch(`${this.sireBase}${ep}`, {
       headers:{ Authorization:`Bearer ${token}`, Accept:'application/json' },
