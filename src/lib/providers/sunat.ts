@@ -355,6 +355,7 @@ export class DirectSunatProvider implements ISunatProvider {
       ? `/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${ruc}/${per}/exportapropuesta?codTipoArchivo=0`
       : `/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${ruc}/${per}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`;
     console.log(`[SIRE] Propuesta ${tipo} RUC ${ruc} período ${per}: ${this.sireBase}${ep}`);
+    console.log(`[SIRE] Token (primeros 40 chars): ${token.substring(0, 40)}...`);
 
     const doRequest = async (tkn: string) => fetch(`${this.sireBase}${ep}`, {
       headers: this.sireHeaders(tkn),
@@ -362,20 +363,24 @@ export class DirectSunatProvider implements ISunatProvider {
     });
 
     let res = await doRequest(token);
+    console.log(`[SIRE] Propuesta HTTP status: ${res.status}`);
 
     // Si 401, limpiar cache y reintentar con token fresco
     if (res.status === 401 && clientId && solUser !== undefined && solPass !== undefined) {
       console.log('[SIRE] 401 en propuesta — limpiando cache y reintentando con token fresco...');
       const body401 = await res.text();
-      console.log('[SIRE] 401 body:', body401.substring(0, 300));
+      console.log('[SIRE] 401 body (completo):', body401.substring(0, 2000));
       const cacheKey = `sire-${ruc}-${clientId}`;
       sireTokenCache.delete(cacheKey);
       const freshToken = await this.getSireToken(ruc, solUser, solPass, clientId, clientSecret);
+      console.log(`[SIRE] Token fresco (primeros 40 chars): ${freshToken.substring(0, 40)}...`);
       res = await doRequest(freshToken);
+      console.log(`[SIRE] Reintento HTTP status: ${res.status}`);
     }
 
     if (!res.ok) {
       const body = await res.text();
+      console.log(`[SIRE] Error final ${res.status} body:`, body.substring(0, 2000));
       throw new Error(`SIRE propuesta error ${res.status}: ${body}`);
     }
     return res.json() as Promise<{ numTicket:string; estado:string; archivoReporte?:{ nomArchivoReporte:string }[] }>;
