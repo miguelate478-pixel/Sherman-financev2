@@ -7,10 +7,9 @@ export interface SunatDocument {
   tipo: string; fecha: string; total: number; moneda: string;
   rsEmisor: string; rucEmisor: string; rsReceptor: string; rucReceptor: string;
   sunatStatus: string; cdrStatus: string;
-  // Campos reales que devuelve SUNAT para el receptor/cliente
-  tipoDocCliente?: string;   // "6" = RUC, "1" = DNI, "0" = sin doc
-  numDocCliente?: string;    // RUC o DNI real (ej: "20611749792")
-  razonSocialCliente?: string; // Razón social (puede venir vacío)
+  tipoDocCliente?: string;
+  numDocCliente?: string;
+  razonSocialCliente?: string;
 }
 
 export interface SunatValidationResult {
@@ -41,10 +40,7 @@ export interface ISunatProvider {
   consultarTicket(ticket: string, sireToken: string): Promise<{ numTicket: string; estado: string; archivoReporte?: { nomArchivoReporte: string }[] }>;
 }
 
-const tokenCache = new Map<string, { token: string; expiresAt: number }>();
-function getCached(key: string) { const c = tokenCache.get(key); if (c && c.expiresAt > Date.now() + 60_000) return c.token; return null; }
-function setCache(key: string, token: string, expiresIn: number) { tokenCache.set(key, { token, expiresAt: Date.now() + expiresIn * 1000 }); }
-
+// No cache — always get fresh token to avoid stale/invalid token issues
 export function getStoragePath(ruc: string, period: string, operation: string, tipo: string, docId: string): string {
   const base = process.env.STORAGE_PATH ?? './storage';
   return path.join(base, 'sunat', ruc, period, operation.toLowerCase(), tipo, docId.replace(/\//g, '-'));
@@ -76,12 +72,12 @@ const MOCK_DOCS: SunatDocument[] = [
 function mockXml(doc: SunatDocument): string {
   const base = (Math.abs(doc.total)/1.18).toFixed(2);
   const igv  = (Math.abs(doc.total)-parseFloat(base)).toFixed(2);
-  return `<?xml version="1.0" encoding="UTF-8"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"><cbc:ID>${doc.serie}-${doc.numero}</cbc:ID><cbc:IssueDate>${doc.fecha}</cbc:IssueDate><cbc:InvoiceTypeCode listID="0101">${doc.tipo}</cbc:InvoiceTypeCode><cbc:DocumentCurrencyCode>${doc.moneda}</cbc:DocumentCurrencyCode><cac:AccountingSupplierParty><cac:Party><cac:PartyTaxScheme><cbc:CompanyID>${doc.rucEmisor}</cbc:CompanyID></cac:PartyTaxScheme><cac:PartyLegalEntity><cbc:RegistrationName>${doc.rsEmisor}</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party></cac:AccountingSupplierParty><cac:AccountingCustomerParty><cac:Party><cac:PartyTaxScheme><cbc:CompanyID>${doc.rucReceptor}</cbc:CompanyID></cac:PartyTaxScheme><cac:PartyLegalEntity><cbc:RegistrationName>${doc.rsReceptor}</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party></cac:AccountingCustomerParty><cac:TaxTotal><cbc:TaxAmount currencyID="${doc.moneda}">${igv}</cbc:TaxAmount><cac:TaxSubtotal><cbc:TaxableAmount currencyID="${doc.moneda}">${base}</cbc:TaxableAmount><cac:TaxCategory><cbc:TaxExemptionReasonCode>10</cbc:TaxExemptionReasonCode></cac:TaxCategory></cac:TaxSubtotal></cac:TaxTotal><cac:LegalMonetaryTotal><cbc:PayableAmount currencyID="${doc.moneda}">${Math.abs(doc.total).toFixed(2)}</cbc:PayableAmount></cac:LegalMonetaryTotal><cac:InvoiceLine><cbc:ID>1</cbc:ID><cbc:InvoicedQuantity unitCode="ZZ">1</cbc:InvoicedQuantity><cbc:LineExtensionAmount currencyID="${doc.moneda}">${base}</cbc:LineExtensionAmount><cac:Item><cbc:Description>Servicio profesional segun contrato de prestacion de servicios — ${doc.rsEmisor} — Periodo Abril 2026</cbc:Description><cac:SellersItemIdentification><cbc:ID>SRV-001</cbc:ID></cac:SellersItemIdentification></cac:Item><cac:Price><cbc:PriceAmount currencyID="${doc.moneda}">${base}</cbc:PriceAmount></cac:Price><cac:TaxTotal><cbc:TaxAmount currencyID="${doc.moneda}">${igv}</cbc:TaxAmount><cac:TaxSubtotal><cac:TaxCategory><cbc:TaxExemptionReasonCode>10</cbc:TaxExemptionReasonCode></cac:TaxCategory></cac:TaxSubtotal></cac:TaxTotal></cac:InvoiceLine></Invoice>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"><cbc:ID>${doc.serie}-${doc.numero}</cbc:ID><cbc:IssueDate>${doc.fecha}</cbc:IssueDate><cbc:DocumentCurrencyCode>${doc.moneda}</cbc:DocumentCurrencyCode><cac:LegalMonetaryTotal><cbc:PayableAmount currencyID="${doc.moneda}">${Math.abs(doc.total).toFixed(2)}</cbc:PayableAmount></cac:LegalMonetaryTotal></Invoice>`;
 }
 
 export class MockSunatProvider implements ISunatProvider {
-  async getToken(_clientId?: string, _clientSecret?: string) { await sleep(400); return 'mock-cpe-' + Date.now(); }
-  async getSireToken(_r: string, _u: string, _p: string, _clientId?: string, _clientSecret?: string) { await sleep(400); return 'mock-sire-' + Date.now(); }
+  async getToken(_cId?: string, _cSec?: string) { await sleep(400); return 'mock-cpe-' + Date.now(); }
+  async getSireToken(_r: string, _u: string, _p: string, _cId?: string, _cSec?: string) { await sleep(400); return 'mock-sire-' + Date.now(); }
   async validateDocument(_p: { numRuc: string }) { await sleep(600); return { estadoCp:'1', estadoRuc:'00', condDomiRuc:'00', observaciones:[] }; }
   async bulkDownload(p: { ruc: string; operation: 'COMPRAS'|'VENTAS' }): Promise<BulkResult> {
     await sleep(1000);
@@ -118,42 +114,53 @@ export class DirectSunatProvider implements ISunatProvider {
   private sireBase     = 'https://api-sire.sunat.gob.pe/v1';
 
   async getToken(clientId?: string, clientSecret?: string): Promise<string> {
-    const cId = clientId || process.env.SUNAT_CLIENT_ID || '';
-    const cSecret = clientSecret || process.env.SUNAT_CLIENT_SECRET || '';
-    
-    const key = `cpe-${cId}`;
-    const c = getCached(key); if (c) return c;
+    const cId  = clientId     || process.env.SUNAT_CLIENT_ID     || '';
+    const cSec = clientSecret || process.env.SUNAT_CLIENT_SECRET || '';
+    if (!cId || !cSec) throw new Error('Client ID y Client Secret requeridos. Ingrésalos en Centro SUNAT/SIRE.');
     const res = await fetch(`${this.apiBase}/clientesextranet/${cId}/oauth2/token/`, {
-      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({ grant_type:'client_credentials', scope:`${this.validateBase}/contribuyente/controlcpe`, client_id:cId, client_secret:cSecret }),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'client_credentials',
+        scope:         `${this.validateBase}/contribuyente/contribuyentes`,
+        client_id:     cId,
+        client_secret: cSec,
+      }),
     });
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`SUNAT CPE token error ${res.status}: ${body}`);
     }
-    const j = await res.json() as { access_token:string; expires_in:number };
-    setCache(key, j.access_token, j.expires_in);
+    const j = await res.json() as { access_token: string };
     return j.access_token;
   }
 
   async getSireToken(ruc: string, solUser: string, solPass: string, clientId?: string, clientSecret?: string): Promise<string> {
-    const cId = clientId || process.env.SUNAT_CLIENT_ID || '';
-    const cSecret = clientSecret || process.env.SUNAT_CLIENT_SECRET || '';
-    
-    const key = `sire-${ruc}`;
-    const c = getCached(key); if (c) return c;
+    const cId  = clientId     || process.env.SUNAT_CLIENT_ID     || '';
+    const cSec = clientSecret || process.env.SUNAT_CLIENT_SECRET || '';
+    if (!cId || !cSec) throw new Error('Client ID y Client Secret requeridos.');
     const res = await fetch(`${this.apiBase}/clientessol/${cId}/oauth2/token/`, {
-      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({ grant_type:'password', scope:`${this.validateBase}/contribuyente/migeigv`, client_id:cId, client_secret:cSecret, username:`${ruc}${solUser}`, password:solPass }),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'password',
+        scope:         this.sireBase,
+        client_id:     cId,
+        client_secret: cSec,
+        username:      `${ruc}${solUser}`,
+        password:      solPass,
+      }),
     });
-    if (!res.ok) throw new Error(`SIRE token error ${res.status}: ${await res.text()}`);
-    const j = await res.json() as { access_token:string; expires_in:number };
-    setCache(key, j.access_token, j.expires_in);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`SIRE token error ${res.status}: ${body}`);
+    }
+    const j = await res.json() as { access_token: string };
     return j.access_token;
   }
 
   async validateDocument(p: { ruc:string; token:string; numRuc:string; codComp:string; serie:string; numero:string; fecha:string; monto:number }): Promise<SunatValidationResult> {
-    const res = await fetch(`${this.validateBase}/contribuyente/controlcpe/${p.ruc}/validarcomprobante`, {
+    const res = await fetch(`${this.validateBase}/contribuyente/contribuyentes/${p.ruc}/validarcomprobante`, {
       method:'POST', headers:{ Authorization:`Bearer ${p.token}`, 'Content-Type':'application/json' },
       body: JSON.stringify({ numRuc:p.numRuc, codComp:p.codComp, numeroSerie:p.serie, numero:p.numero, fechaEmision:p.fecha, monto:String(p.monto) }),
     });
@@ -166,8 +173,8 @@ export class DirectSunatProvider implements ISunatProvider {
     const token = p.sireToken ?? await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', p.clientId, p.clientSecret);
     const tipo  = p.operation==='VENTAS' ? 'RVIE' : 'RCE';
     const ticket = await this.getSirePropuesta(p.ruc, p.period, tipo, token);
-    let estado = ticket.estado; let finalTicket = ticket; let attempts = 0;
-    while (estado!=='06' && estado!=='07' && attempts<20) { await sleep(2000); finalTicket = await this.consultarTicket(ticket.numTicket, token); estado = finalTicket.estado; attempts++; }
+    let estado = ticket.estado; let attempts = 0;
+    while (estado!=='06' && estado!=='07' && attempts<20) { await sleep(2000); const t = await this.consultarTicket(ticket.numTicket, token); estado = t.estado; attempts++; }
     if (estado==='07') throw new Error('SIRE ticket error');
     return { period:p.period, operation:p.operation, docsFound:0, docsXml:0, docsPdf:0, docsCdr:0, errors:0, documents:[] };
   }
@@ -185,7 +192,7 @@ export class DirectSunatProvider implements ISunatProvider {
     return res.json() as Promise<{ numTicket:string; estado:string; archivoReporte?:{ nomArchivoReporte:string }[] }>;
   }
 
-  async downloadXml(_ruc: string, _id: string, _sp?: string): Promise<DownloadResult> { return { success:false, error:'XML via SIRE propuesta ZIP (use mock mode to test)' }; }
+  async downloadXml(_ruc: string, _id: string, _sp?: string): Promise<DownloadResult> { return { success:false, error:'XML via SIRE propuesta ZIP' }; }
   async downloadPdf(_ruc: string, _id: string, _sp?: string): Promise<DownloadResult> { return { success:false, error:'PDF via SIRE (pending)' }; }
   async downloadCdr(_ruc: string, _id: string, _sp?: string): Promise<DownloadResult> { return { success:false, error:'CDR via SIRE (pending)' }; }
 }

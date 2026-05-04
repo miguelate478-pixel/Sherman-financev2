@@ -559,7 +559,7 @@ function SunatCentroView({empresa,addToast,onNav}:{empresa:Company|null;addToast
 
   useEffect(()=>{
     if(!empresa?.id) return;
-    API.getCredentials(empresa.id).then(r=>{if(r.ok&&r.data){setExistingCred(r.data);setCreds(p=>({...p,solUser:r.data.solUser||''}));}});
+    API.getCredentials(empresa.id).then(r=>{if(r.ok&&r.data){setExistingCred(r.data);setCreds(p=>({...p,solUser:r.data.solUser||'',clientId:r.data.clientId||''}));}});
   },[empresa?.id]);
 
   const saveCredentials=async()=>{
