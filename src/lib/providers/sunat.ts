@@ -113,6 +113,40 @@ export class DirectSunatProvider implements ISunatProvider {
   private validateBase = 'https://api.sunat.gob.pe/v1';
   private sireBase     = 'https://apisire.sunat.gob.pe/v1';
 
+  private async fetchWithRetry(url: string, options: RequestInit, maxRetries: number = 3): Promise<Response> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`[SIRE] Attempt ${attempt}/${maxRetries} to download: ${url}`);
+        const res = await fetch(url, options);
+        if (res.ok) return res;
+
+        // If not OK, log and retry
+        const body = await res.text();
+        console.log(`[SIRE] HTTP ${res.status} on attempt ${attempt}: ${body.substring(0, 200)}`);
+        lastError = new Error(`HTTP ${res.status}`);
+
+        if (attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // exponential backoff
+          console.log(`[SIRE] Retrying in ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      } catch (e) {
+        lastError = e as Error;
+        console.log(`[SIRE] Network error on attempt ${attempt}: ${(e as Error).message}`);
+
+        if (attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+          console.log(`[SIRE] Retrying in ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+    }
+
+    throw new Error(`Failed to download after ${maxRetries} attempts: ${lastError?.message}`);
+  }
+
   async getToken(clientId?: string, clientSecret?: string): Promise<string> {
     return 'no-cpe-token';
   }
@@ -187,10 +221,10 @@ export class DirectSunatProvider implements ISunatProvider {
     for (const archivo of archivos) {
       try {
         const zipUrl = `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/descargaarchivo?nomArchivoReporte=${encodeURIComponent(archivo.nomArchivoReporte)}`;
-        const zipRes = await fetch(zipUrl, {
+        const zipRes = await this.fetchWithRetry(zipUrl, {
           headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(30000),
-        });
+          signal: AbortSignal.timeout(60000), // Increase to 60 seconds
+        }, 3);
 
         if (!zipRes.ok) {
           console.log(`[SIRE] Error descargando ${archivo.nomArchivoReporte}: HTTP ${zipRes.status}`);
@@ -267,7 +301,8 @@ export class DirectSunatProvider implements ISunatProvider {
         totalErrors += errors;
 
       } catch(e) {
-        console.log(`[SIRE] Error procesando archivo ${archivo.nomArchivoReporte}: ${(e as Error).message}`);
+        console.error(`[SIRE] Error procesando archivo ${archivo.nomArchivoReporte}:`, e);
+        console.log(`[SIRE] Error details: ${(e as Error).message}`);
         totalErrors++;
       }
     }
