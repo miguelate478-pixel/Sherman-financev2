@@ -115,12 +115,13 @@ export async function getCredentialByCompany(companyId: string) {
 export async function upsertCredential(companyId: string, data: Record<string, unknown>) {
   const db = getDb();
   const now = new Date().toISOString();
+  const provider = process.env.SUNAT_PROVIDER === 'direct' ? 'direct' : 'mock';
   const existing = await getCredentialByCompany(companyId);
   if (existing) {
-    await db.execute({ sql: 'UPDATE sunat_credentials SET solUser=?,encryptedPass=?,iv=?,authTag=?,clientId=?,encClientSecret=?,status=?,updatedAt=? WHERE companyId=?', args: args(data.solUser, data.encryptedPass, data.iv, data.authTag, data.clientId||null, data.encClientSecret||null, 'pending', now, companyId) });
+    await db.execute({ sql: 'UPDATE sunat_credentials SET solUser=?,encryptedPass=?,iv=?,authTag=?,clientId=?,encClientSecret=?,provider=?,status=?,updatedAt=? WHERE companyId=?', args: args(data.solUser, data.encryptedPass, data.iv, data.authTag, data.clientId||null, data.encClientSecret||null, provider, 'pending', now, companyId) });
   } else {
     const id = 'sc' + Math.random().toString(36).slice(2, 11);
-    await db.execute({ sql: 'INSERT INTO sunat_credentials (id,companyId,solUser,encryptedPass,iv,authTag,clientId,encClientSecret,provider,status,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', args: args(id, companyId, data.solUser, data.encryptedPass, data.iv, data.authTag, data.clientId||null, data.encClientSecret||null, 'mock', 'pending', now, now) });
+    await db.execute({ sql: 'INSERT INTO sunat_credentials (id,companyId,solUser,encryptedPass,iv,authTag,clientId,encClientSecret,provider,status,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', args: args(id, companyId, data.solUser, data.encryptedPass, data.iv, data.authTag, data.clientId||null, data.encClientSecret||null, provider, 'pending', now, now) });
   }
 }
 
