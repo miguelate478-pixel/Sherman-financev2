@@ -278,7 +278,7 @@ function Login({onLogin}:{onLogin:(u:User)=>void}) {
         </button>
         <div style={{textAlign:'center',marginTop:'.75rem'}}><a href="/forgot-password" style={{fontSize:11,color:C.blue,textDecoration:'none'}}>¿Olvidaste tu contraseña?</a></div>
         <div style={{marginTop:'1.25rem',background:C.bg,borderRadius:8,padding:'.75rem',fontSize:11,color:C.t3}}>
-          <div style={{fontWeight:700,marginBottom:6}}>Usuarios demo — clic para rellenar:</div>
+          <div style={{fontWeight:700,marginBottom:6}}>Acceso rápido — clic para rellenar:</div>
           {[['Admin','admin@empresa.pe','Admin123!'],['Contador','mruiz@empresa.pe','Demo1234!'],['Supervisor','jlopez@empresa.pe','Demo1234!'],['Auditor','aaudit@empresa.pe','Demo1234!']].map(([r,e,p])=>(
             <div key={e} style={{display:'flex',justifyContent:'space-between',padding:'3px 0',cursor:'pointer'}} onClick={()=>{setEmail(e);setPass(p);}}>
               <span style={{color:C.blue,fontWeight:600}}>{r}</span><span style={{fontFamily:'JetBrains Mono,monospace',color:C.t4}}>{e}</span>
@@ -632,7 +632,7 @@ function SunatCentroView({empresa,addToast,onNav}:{empresa:Company|null;addToast
         ))}
 
         <div style={{background:C.amberL,border:`1px solid ${C.amberM}`,borderRadius:7,padding:'.65rem .9rem',marginBottom:'1rem',fontSize:11,color:C.amber}}>
-          ⚠ El Client ID y Secret se obtienen en SOL → Empresas → Credenciales API SUNAT → Registrar aplicación. Deben coincidir con los del <code>.env.local</code>.
+          ⚠ El Client ID y Secret se obtienen en SOL → Empresas → Credenciales API SUNAT → Registrar aplicación. Deben coincidir con los configurados en el servidor.
         </div>
 
         <div style={{display:'flex',gap:8}}>
@@ -1305,7 +1305,7 @@ function ConcarView({docs,empresa,addToast,period}:{docs:Doc[];empresa:Company|n
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.5rem'}}>
         <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>Conexión SQL Server</div>
-        {[['Provider','mock (sqlserver ready)'],['Servidor','sqlserver.interno.local'],['Base de datos','CONCAR_EMPRESA01'],['Usuario','app_readonly'],['Cifrado','TLS 1.3 · Encrypt=True']].map(([k,v])=>(
+        {[['Provider',process.env.NEXT_PUBLIC_CONCAR_PROVIDER||'mock'],['Servidor','Configurar en variables de entorno'],['Base de datos','CONCAR_SQL_DATABASE'],['Usuario','CONCAR_SQL_USER'],['Cifrado','TLS 1.3 · Encrypt=True']].map(([k,v])=>(
           <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'.4rem 0',borderBottom:`1px solid ${C.border}`,fontSize:12}}>
             <span style={{color:C.t3}}>{k}</span><span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:C.t1}}>{v}</span>
           </div>
@@ -1891,7 +1891,7 @@ function ConfigView({addToast,user}:{addToast:(m:string,t?:ToastType)=>void;user
     </div>
 
     {tab==='sistema'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
-      {[{t:'SUNAT Provider',items:[['Modo actual',process.env.NEXT_PUBLIC_SUNAT_MODE==='direct'?'🟢 REAL':'🟡 MOCK'],['Para activar real','SUNAT_PROVIDER=direct en .env.local'],['Client ID','SUNAT_CLIENT_ID=tu_client_id'],['OAuth2 URL','api-seguridad.sunat.gob.pe/v1/...'],['Validate URL','api.sunat.gob.pe/v1/.../validarcomprobante'],['SIRE URL','api-sire.sunat.gob.pe/v1/contribuyente/...']]},
+      {[{t:'SUNAT Provider',items:[['Modo actual',process.env.NEXT_PUBLIC_SUNAT_MODE==='direct'?'🟢 REAL':'🟡 MOCK'],['Para activar real','SUNAT_PROVIDER=direct en variables de entorno'],['Client ID','SUNAT_CLIENT_ID=tu_client_id'],['OAuth2 URL','api-seguridad.sunat.gob.pe/v1/...'],['Validate URL','api.sunat.gob.pe/v1/.../validarcomprobante'],['SIRE URL','api-sire.sunat.gob.pe/v1/contribuyente/...']]},
         {t:'CONCAR SQL Server',items:[['Modo','CONCAR_PROVIDER=mock|sqlserver'],['Driver','mssql (npm install mssql)'],['Server','CONCAR_SQL_SERVER=...'],['Database','CONCAR_SQL_DATABASE=CONCAR_CB'],['User','CONCAR_SQL_USER=...'],['Aprobación','Solo Supervisor puede aprobar']]},
         {t:'AI / Copiloto',items:[['Modo','AI_PROVIDER=mock|openai'],['Anthropic (Claude)','ANTHROPIC_API_KEY=sk-ant-...'],['OpenAI','OPENAI_API_KEY=sk-...'],['Modelo Anthropic','claude-haiku-4-5-20251001'],['Modelo OpenAI','gpt-4o-mini'],['Fallback','Reglas PCGE siempre activas']]},
         {t:'Base de datos',items:[['Local dev','DATABASE_URL=file:prisma/dev.db'],['Turso cloud','libsql://xxx.turso.io'],['PostgreSQL','postgresql://user:pass@host/db'],['Scripts','npm run db:init · db:seed · db:reset'],['Tablas','16 tablas · 57 registros demo'],['Backup','Copiar prisma/dev.db periódicamente']]},
@@ -1965,7 +1965,7 @@ function ConfigView({addToast,user}:{addToast:(m:string,t?:ToastType)=>void;user
       <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'.25rem'}}>Configuración SMTP</div>
       <div style={{fontSize:11,color:C.t4,marginBottom:'1rem'}}>Para emails de bienvenida, alertas y recuperación de contraseña</div>
       <div style={{background:C.amberL,border:`1px solid ${C.amberM}`,borderRadius:8,padding:'.75rem',fontSize:12,color:C.amber,marginBottom:'1rem'}}>
-        ⚠ Estas variables deben configurarse en <code style={{background:C.amberM,padding:'1px 6px',borderRadius:4}}>.env.local</code> — no se guardan en BD por seguridad.
+        ⚠ Estas variables deben configurarse en el servidor (variables de entorno) — no se guardan en BD por seguridad.
       </div>
       {[
         ['SMTP_HOST','smtp.gmail.com','Servidor SMTP (Gmail, Resend, AWS SES)'],
