@@ -41,11 +41,12 @@ export async function getUser(req: NextRequest): Promise<JWTPayload | null> {
 }
 
 // Resuelve qué companyIds puede ver el usuario.
-// Admin sin restricción (companyIds=null) → ve todas o filtra por pedido
-// Usuario con empresas asignadas → solo las suyas
+// companyIds=null → ve todas las empresas (sin restricción, cualquier rol)
+// companyIds=[] → sin acceso a ninguna empresa
+// companyIds=[id1,id2] → solo esas empresas
 export function resolveCompanyFilter(user: JWTPayload, requestedId?: string | null) {
-  const isGlobalAdmin = user.role === 'Administrador' && user.companyIds === null;
-  if (isGlobalAdmin) {
+  const isUnrestricted = user.companyIds === null;
+  if (isUnrestricted) {
     return { companyIds: requestedId ? [requestedId] : null, allowed: true };
   }
   const assigned = user.companyIds ?? [];
