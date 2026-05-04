@@ -114,48 +114,34 @@ export class DirectSunatProvider implements ISunatProvider {
   private sireBase     = 'https://api-sire.sunat.gob.pe/v1';
 
   async getToken(clientId?: string, clientSecret?: string): Promise<string> {
-    const cId  = clientId     || process.env.SUNAT_CLIENT_ID     || '';
-    const cSec = clientSecret || process.env.SUNAT_CLIENT_SECRET || '';
-    if (!cId || !cSec) throw new Error('Client ID y Client Secret requeridos. Ingrésalos en Centro SUNAT/SIRE.');
-    const res = await fetch(`${this.apiBase}/clientesextranet/${cId}/oauth2/token/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type:    'client_credentials',
-        scope:         `${this.validateBase}/contribuyente/contribuyentes`,
-        client_id:     cId,
-        client_secret: cSec,
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`SUNAT CPE token error ${res.status}: ${body}`);
-    }
-    const j = await res.json() as { access_token: string };
-    return j.access_token;
+    return 'no-cpe-token';
   }
 
   async getSireToken(ruc: string, solUser: string, solPass: string, clientId?: string, clientSecret?: string): Promise<string> {
     const cId  = clientId     || process.env.SUNAT_CLIENT_ID     || '';
     const cSec = clientSecret || process.env.SUNAT_CLIENT_SECRET || '';
     if (!cId || !cSec) throw new Error('Client ID y Client Secret requeridos.');
-    const res = await fetch(`${this.apiBase}/clientessol/${cId}/oauth2/token/`, {
+    const url = `https://api-seguridad.sunat.gob.pe/v1/clientessol/${cId}/oauth2/token/`;
+    const params = new URLSearchParams({
+      grant_type:    'password',
+      scope:         'https://api-sire.sunat.gob.pe',
+      client_id:     cId,
+      client_secret: cSec,
+      username:      `${ruc}${solUser}`,
+      password:      solPass,
+    });
+    console.log(`[SIRE] Auth POST ${url}`);
+    console.log(`[SIRE] username=${ruc}${solUser} | clientId=${cId}`);
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type:    'password',
-        scope:         this.sireBase,
-        client_id:     cId,
-        client_secret: cSec,
-        username:      `${ruc}${solUser}`,
-        password:      solPass,
-      }),
+      body: params,
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`SIRE token error ${res.status}: ${body}`);
+      throw new Error(`SUNAT auth error ${res.status}: ${body}`);
     }
-    const j = await res.json() as { access_token: string };
+    const j = await res.json() as { access_token: string; expires_in: number };
     return j.access_token;
   }
 

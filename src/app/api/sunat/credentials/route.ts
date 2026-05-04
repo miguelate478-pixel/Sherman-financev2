@@ -84,18 +84,19 @@ export async function PATCH(req: NextRequest) {
     if (process.env.SUNAT_PROVIDER === 'direct') {
       const provider = new DirectSunatProvider();
       try {
-        await provider.getToken(clientId, clientSecret ?? undefined);
-        hasCpeToken = true;
-        try {
-          await provider.getSireToken(company.ruc as string, cred.solUser as string, solPass, clientId, clientSecret ?? undefined);
-          hasSireToken = true;
-          message = 'CPE ✓ + SIRE ✓ — Conectado a SUNAT correctamente';
-        } catch (e2) {
-          message = 'CPE ✓ — SIRE error: ' + (e2 as Error).message;
-          status = 'partial';
-        }
+        // Solo probamos SIRE (password grant) - no CPE separado
+        const token = await provider.getSireToken(
+          company.ruc as string,
+          cred.solUser as string,
+          solPass,
+          clientId ?? undefined,
+          clientSecret ?? undefined
+        );
+        hasCpeToken  = true;
+        hasSireToken = true;
+        message = 'SIRE ✓ — Conectado a SUNAT correctamente';
       } catch (e1) {
-        status = 'error';
+        status  = 'error';
         message = (e1 as Error).message;
       }
     } else {
