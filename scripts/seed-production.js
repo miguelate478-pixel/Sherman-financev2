@@ -35,19 +35,19 @@ db.exec("DELETE FROM audit_logs");
 db.exec("DELETE FROM users");
 console.log('  ✓ Base de datos limpia\n');
 
-// ── Usuario Administrador ──────────────────────────────────
-const adminId = uid();
+// ── Usuario Administrador — ID FIJO ───────────────────────────────
+const adminId = 'admin-sherman-01'; // ID fijo, nunca cambia
 const adminPass = 'Sherman2026!';
 const adminHash = bcrypt.hashSync(adminPass, 12);
 
-db.prepare('INSERT INTO users (id,name,email,password,role,mfaEnabled,status,companyIds,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)')
+db.prepare('INSERT OR IGNORE INTO users (id,name,email,password,role,mfaEnabled,status,companyIds,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)')
   .run(adminId, 'Miguel Ate', 'admin@shermaninmobiliaria.pe', adminHash, 'Administrador', 0, 'activo', null, now, now);
 
 console.log('  ✓ Usuario administrador creado');
 
-// ── Empresa Real ───────────────────────────────────────────
-const empId = uid();
-db.prepare('INSERT INTO companies (id,ruc,businessName,tradeName,regime,sector,contactEmail,igvRate,status,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+// ── Empresa Real — ID FIJO para evitar FK errors en redeploys ─────
+const empId = 'sherman-inmobiliaria-01'; // ID fijo, nunca cambia
+db.prepare('INSERT OR IGNORE INTO companies (id,ruc,businessName,tradeName,regime,sector,contactEmail,igvRate,status,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
   .run(empId, '20610169849', 'SHERMAN INMOBILIARIA S.A.C.', 'Sherman Inmobiliaria', 'General', 'Inmobiliaria', 'admin@shermaninmobiliaria.pe', 18, 'activo', now, now);
 
 console.log('  ✓ Empresa SHERMAN INMOBILIARIA S.A.C. creada');
