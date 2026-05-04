@@ -96,7 +96,9 @@ export async function POST(req: NextRequest) {
               ? (doc.razonSocialCliente || doc.rsReceptor || '')
               : doc.rsReceptor;
             try {
+              console.log('[BULK] Guardando doc:', docId, 'companyId:', companyId, 'periodo:', period);
               await createDocument({id:docId,companyId,bulkJobId:jobId,operation:op==='COMPRAS'?'COMPRA':'VENTA',docType:doc.tipo,serie:doc.serie,number:doc.numero,issuerRuc:doc.rucEmisor,issuerName:doc.rsEmisor,receiverRuc,receiverName,issueDate:doc.fecha,currency:doc.moneda,base:parseFloat(base.toFixed(2)),igv:parseFloat(igv.toFixed(2)),total:doc.total,sunatStatus:doc.sunatStatus,cdrStatus:doc.cdrStatus,hasXml,hasPdf,hasCdr,xmlPath,pdfPath,cdrPath,hashSha256:docHash,period,workflow:'PENDIENTE_REVISION',concarStatus:'PENDIENTE',parserStatus:'PENDIENTE',aiStatus:'PENDIENTE'});
+              console.log('[BULK] Doc guardado OK:', docId);
             } catch (dbError) {
               console.error(`[BULK_DOWNLOAD] Failed to save document ${docId}:`, dbError);
               periodErrors++;
@@ -120,12 +122,12 @@ export async function POST(req: NextRequest) {
           await updateBulkJobPeriod(jpId,{status:'COMPLETADO',docsFound:result.docsFound,docsXml:periodXml,docsPdf:periodPdf,docsCdr:periodCdr,errors:periodErrors,completedAt:new Date().toISOString()});
           totalDocs+=result.docsFound;totalXml+=periodXml;totalPdf+=periodPdf;totalCdr+=periodCdr;totalErrors+=periodErrors;
         } catch(e) {
-          const errMsg = (e as Error).message;
-          console.error('[BULK ERROR] período:', period, 'op:', op, 'error:', errMsg);
+          console.error('[BULK ERROR] período:', period, 'op:', op);
+          console.error('[BULK ERROR] mensaje:', (e as Error).message);
+          console.error('[BULK ERROR] stack:', (e as Error).stack?.split('\n')[1]);
           await updateBulkJobPeriod(jpId,{status:'ERROR',completedAt:new Date().toISOString()});
           totalErrors++;
-          // Guardar el último error para incluirlo en la respuesta
-          lastError = errMsg;
+          lastError = (e as Error).message;
         }
       }
     }
