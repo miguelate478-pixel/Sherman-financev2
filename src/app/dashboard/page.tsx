@@ -308,7 +308,7 @@ function Sidebar({active,onNav,user}:{active:string;onNav:(id:string)=>void;user
         <div style={{width:34,height:34,borderRadius:8,background:C.blue,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,fontWeight:900,color:'#fff',flexShrink:0}}>S</div>
         <div><div style={{fontSize:9,color:'rgba(255,255,255,.35)',letterSpacing:2,textTransform:'uppercase'}}>Sherman</div><div style={{fontSize:13,fontWeight:800,color:'#fff'}}>Finance Control AI</div></div>
       </div>
-      <div style={{marginTop:10,background:'rgba(37,99,235,.2)',border:'1px solid rgba(37,99,235,.4)',borderRadius:6,padding:'4px 10px',fontSize:10,color:'#93C5FD',fontWeight:600}}>● Mock → activar SUNAT real en .env</div>
+      <div style={{marginTop:10,background:process.env.NEXT_PUBLIC_SUNAT_MODE==='direct'?'rgba(22,163,74,.2)':'rgba(37,99,235,.2)',border:`1px solid ${process.env.NEXT_PUBLIC_SUNAT_MODE==='direct'?'rgba(22,163,74,.4)':'rgba(37,99,235,.4)'}`,borderRadius:6,padding:'4px 10px',fontSize:10,color:process.env.NEXT_PUBLIC_SUNAT_MODE==='direct'?'#86EFAC':'#93C5FD',fontWeight:600}}>{process.env.NEXT_PUBLIC_SUNAT_MODE==='direct'?'● SUNAT Real activo':'● Mock → activar SUNAT real en .env'}</div>
     </div>
     <div style={{flex:1,padding:'.4rem 0'}}>
       {NAV_GROUPS.map(g=><div key={g.g}>
