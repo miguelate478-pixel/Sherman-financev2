@@ -32,7 +32,7 @@ export interface ISunatProvider {
   getToken(clientId?: string, clientSecret?: string): Promise<string>;
   getSireToken(ruc: string, solUser: string, solPass: string, clientId?: string, clientSecret?: string): Promise<string>;
   validateDocument(p: { ruc: string; token: string; numRuc: string; codComp: string; serie: string; numero: string; fecha: string; monto: number }): Promise<SunatValidationResult>;
-  bulkDownload(p: { ruc: string; period: string; operation: 'COMPRAS'|'VENTAS'; documentTypes: string[]; sireToken?: string; solUser?: string; solPass?: string }): Promise<BulkResult>;
+  bulkDownload(p: { ruc: string; period: string; operation: 'COMPRAS'|'VENTAS'; documentTypes: string[]; sireToken?: string; solUser?: string; solPass?: string; clientId?: string; clientSecret?: string }): Promise<BulkResult>;
   downloadXml(ruc: string, documentId: string, storagePath?: string): Promise<DownloadResult>;
   downloadPdf(ruc: string, documentId: string, storagePath?: string): Promise<DownloadResult>;
   downloadCdr(ruc: string, documentId: string, storagePath?: string): Promise<DownloadResult>;
@@ -285,16 +285,46 @@ export class DirectSunatProvider implements ISunatProvider {
   }
 
   async getSirePropuesta(ruc: string, period: string, tipo: 'RVIE'|'RCE', token: string) {
+    // Formato YYYYMM según manual SIRE v25 (ej: "2025-12" → "202512")
     const per = period.replace('-','');
-    const ep  = tipo==='RVIE' ? `/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${per}/exportapropuesta?codTipoArchivo=0` : `/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${per}/exportacioncomprobantepropuesta?codTipoArchivo=0`;
-    const res = await fetch(`${this.sireBase}${ep}`, { headers:{ Authorization:`Bearer ${token}`, Accept:'application/json' } });
-    if (!res.ok) throw new Error(`SIRE propuesta error ${res.status}`);
+    const ep  = tipo==='RVIE'
+      ? `/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${per}/exportapropuesta?codTipoArchivo=0`
+      : `/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${per}/exportacioncomprobantepropuesta?codTipoArchivo=0`;
+    console.log(`[SIRE] Propuesta ${tipo} período ${per}: ${this.sireBase}${ep}`);
+    const res = await fetch(`${this.sireBase}${ep}`, {
+      headers:{ Authorization:`Bearer ${token}`, Accept:'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`SIRE propuesta error ${res.status}: ${body}`);
+    }
     return res.json() as Promise<{ numTicket:string; estado:string; archivoReporte?:{ nomArchivoReporte:string }[] }>;
   }
 
   async consultarTicket(ticket: string, token: string) {
-    const res = await fetch(`${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?numTicket=${ticket}`, { headers:{ Authorization:`Bearer ${token}` } });
-    return res.json() as Promise<{ numTicket:string; estado:string; archivoReporte?:{ nomArchivoReporte:string }[] }>;
+    const res = await fetch(
+      `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?numTicket=${ticket}`,
+      { headers:{ Authorization:`Bearer ${token}` }, signal: AbortSignal.timeout(10000) }
+    );
+    const data = await res.json() as {
+      numTicket: string;
+      estado: string;
+      codProceso?: number;
+      archivoReporte?: { nomArchivoReporte: string }[];
+      registros?: { codProceso: number }[];
+    };
+    // Según manual SIRE v25: codProceso 3=OK, 4=con observaciones, 2=en proceso
+    const codProceso = data.codProceso ?? data.registros?.[0]?.codProceso;
+    if (codProceso === 3 || codProceso === 4) {
+      // Terminado — normalizar estado a "06" para compatibilidad
+      return { ...data, estado: '06' };
+    }
+    if (codProceso !== undefined && codProceso !== 2) {
+      // Error
+      return { ...data, estado: '07' };
+    }
+    return data;
   }
 
   async downloadXml(_ruc: string, _id: string, _sp?: string): Promise<DownloadResult> { return { success:false, error:'XML via SIRE propuesta ZIP' }; }

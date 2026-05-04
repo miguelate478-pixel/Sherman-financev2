@@ -21,8 +21,17 @@ export async function POST(req: NextRequest) {
 
     const cred = await getCredentialByCompany(companyId);
     let solPass = '';
+    let clientId: string | null = null;
+    let clientSecret: string | null = null;
     if (cred && process.env.SUNAT_PROVIDER==='direct') {
       solPass = decrypt(cred.encryptedPass as string, cred.iv as string, cred.authTag as string);
+      clientId = cred.clientId as string | null;
+      if (cred.encClientSecret) {
+        try {
+          const p = JSON.parse(cred.encClientSecret as string) as { enc:string; iv:string; tag:string };
+          clientSecret = decrypt(p.enc, p.iv, p.tag);
+        } catch {}
+      }
     }
 
     const periods = getPeriods(periodFrom, periodTo);
@@ -35,13 +44,33 @@ export async function POST(req: NextRequest) {
     let totalDocs=0,totalXml=0,totalPdf=0,totalCdr=0,totalErrors=0;
 
     let sireToken='';
-    try { sireToken = await sunat.getSireToken(company.ruc as string, (cred?.solUser as string)||'', solPass); } catch {}
+    try {
+      sireToken = await sunat.getSireToken(
+        company.ruc as string,
+        (cred?.solUser as string)||'',
+        solPass,
+        clientId ?? undefined,
+        clientSecret ?? undefined
+      );
+    } catch(e) {
+      console.error('[BULK] Error obteniendo SIRE token:', (e as Error).message);
+    }
 
     for (const period of periods) {
       for (const op of ops) {
         const jpId = await createBulkJobPeriod({ jobId, period, operation:op });
         try {
-          const result = await sunat.bulkDownload({ ruc:company.ruc as string, period, operation:op as 'COMPRAS'|'VENTAS', documentTypes:documentTypes||['01','03','07','08'], sireToken, solUser:(cred?.solUser as string)||'', solPass });
+          const result = await sunat.bulkDownload({
+            ruc:           company.ruc as string,
+            period,
+            operation:     op as 'COMPRAS'|'VENTAS',
+            documentTypes: documentTypes||['01','03','07','08'],
+            sireToken:     sireToken || undefined,
+            solUser:       (cred?.solUser as string)||'',
+            solPass,
+            clientId:      clientId ? clientId : undefined,
+            clientSecret:  clientSecret ? clientSecret : undefined,
+          });
           let periodXml=0,periodPdf=0,periodCdr=0,periodErrors=0;
 
           for (const doc of result.documents) {
@@ -84,6 +113,7 @@ export async function POST(req: NextRequest) {
           await updateBulkJobPeriod(jpId,{status:'COMPLETADO',docsFound:result.docsFound,docsXml:periodXml,docsPdf:periodPdf,docsCdr:periodCdr,errors:periodErrors,completedAt:new Date().toISOString()});
           totalDocs+=result.docsFound;totalXml+=periodXml;totalPdf+=periodPdf;totalCdr+=periodCdr;totalErrors+=periodErrors;
         } catch(e) {
+          console.error('[BULK ERROR] período:', period, 'op:', op, 'error:', (e as Error).message);
           await updateBulkJobPeriod(jpId,{status:'ERROR',completedAt:new Date().toISOString()});
           totalErrors++;
         }
