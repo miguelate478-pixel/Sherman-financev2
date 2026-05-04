@@ -65,7 +65,13 @@ export async function POST(req: NextRequest) {
             const receiverName = op==='VENTAS'
               ? (doc.razonSocialCliente || doc.rsReceptor || '')
               : doc.rsReceptor;
-            await createDocument({id:docId,companyId,bulkJobId:jobId,operation:op==='COMPRAS'?'COMPRA':'VENTA',docType:doc.tipo,serie:doc.serie,number:doc.numero,issuerRuc:doc.rucEmisor,issuerName:doc.rsEmisor,receiverRuc,receiverName,issueDate:doc.fecha,currency:doc.moneda,base:parseFloat(base.toFixed(2)),igv:parseFloat(igv.toFixed(2)),total:doc.total,sunatStatus:doc.sunatStatus,cdrStatus:doc.cdrStatus,hasXml,hasPdf,hasCdr,xmlPath,pdfPath,cdrPath,hashSha256:docHash,period,workflow:'PENDIENTE_REVISION',concarStatus:'PENDIENTE',parserStatus:'PENDIENTE',aiStatus:'PENDIENTE'});
+            try {
+              await createDocument({id:docId,companyId,bulkJobId:jobId,operation:op==='COMPRAS'?'COMPRA':'VENTA',docType:doc.tipo,serie:doc.serie,number:doc.numero,issuerRuc:doc.rucEmisor,issuerName:doc.rsEmisor,receiverRuc,receiverName,issueDate:doc.fecha,currency:doc.moneda,base:parseFloat(base.toFixed(2)),igv:parseFloat(igv.toFixed(2)),total:doc.total,sunatStatus:doc.sunatStatus,cdrStatus:doc.cdrStatus,hasXml,hasPdf,hasCdr,xmlPath,pdfPath,cdrPath,hashSha256:docHash,period,workflow:'PENDIENTE_REVISION',concarStatus:'PENDIENTE',parserStatus:'PENDIENTE',aiStatus:'PENDIENTE'});
+            } catch (dbError) {
+              console.error(`[BULK_DOWNLOAD] Failed to save document ${docId}:`, dbError);
+              periodErrors++;
+              continue;
+            }
 
             if(includeDetails&&xmlContent){
               try{
