@@ -175,7 +175,7 @@ export async function findDocumentById(id: string) {
 export async function createDocument(data: Record<string, unknown>) {
   const db = getDb();
   const now = new Date().toISOString();
-  await db.execute({ sql: 'INSERT OR IGNORE INTO documents (id,companyId,bulkJobId,operation,docType,serie,number,issuerRuc,issuerName,receiverRuc,receiverName,issueDate,dueDate,currency,base,igv,total,hasDetraction,detractionPct,detractionAmt,sunatStatus,cdrStatus,workflow,concarStatus,hasXml,hasPdf,hasCdr,xmlPath,pdfPath,cdrPath,hashSha256,period,parserStatus,aiStatus,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  await db.execute({ sql: 'INSERT INTO documents (id,companyId,bulkJobId,operation,docType,serie,number,issuerRuc,issuerName,receiverRuc,receiverName,issueDate,dueDate,currency,base,igv,total,hasDetraction,detractionPct,detractionAmt,sunatStatus,cdrStatus,workflow,concarStatus,hasXml,hasPdf,hasCdr,xmlPath,pdfPath,cdrPath,hashSha256,period,parserStatus,aiStatus,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
     args: args(data.id,data.companyId,data.bulkJobId||null,data.operation,data.docType,data.serie,data.number,data.issuerRuc,data.issuerName,data.receiverRuc,data.receiverName,data.issueDate,data.dueDate||null,data.currency||'PEN',data.base,data.igv,data.total,data.hasDetraction?1:0,data.detractionPct||null,data.detractionAmt||null,data.sunatStatus||'PENDIENTE',data.cdrStatus||'PENDIENTE',data.workflow||'PENDIENTE_REVISION',data.concarStatus||'PENDIENTE',data.hasXml?1:0,data.hasPdf?1:0,data.hasCdr?1:0,data.xmlPath||null,data.pdfPath||null,data.cdrPath||null,data.hashSha256||null,data.period,data.parserStatus||'PENDIENTE',data.aiStatus||'PENDIENTE',now,now) });
   return data;
 }
@@ -189,7 +189,7 @@ export async function updateDocument(id: string, data: Record<string, unknown>) 
 export async function createDocumentLine(data: Record<string, unknown>) {
   const db = getDb();
   const now = new Date().toISOString();
-  await db.execute({ sql: 'INSERT OR IGNORE INTO document_lines (id,documentId,lineNumber,code,description,quantity,unit,unitValue,igvAmount,lineTotal,affectType,pcgeAccount,costCenter,category,iaConfidence,needsReview,isRecurrent,approved,approvedBy,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  await db.execute({ sql: 'INSERT INTO document_lines (id,documentId,lineNumber,code,description,quantity,unit,unitValue,igvAmount,lineTotal,affectType,pcgeAccount,costCenter,category,iaConfidence,needsReview,isRecurrent,approved,approvedBy,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
     args: args(data.id,data.documentId,data.lineNumber,data.code||'',data.description,data.quantity,data.unit||'ZZ',data.unitValue,data.igvAmount,data.lineTotal,data.affectType||'10',data.pcgeAccount||null,data.costCenter||null,data.category||null,data.iaConfidence||0,data.needsReview?1:0,data.isRecurrent?1:0,0,null,now) });
 }
 
