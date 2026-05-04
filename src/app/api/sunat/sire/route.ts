@@ -19,7 +19,15 @@ export async function POST(req: NextRequest) {
     let sireToken:string;
     if (process.env.SUNAT_PROVIDER==='direct') {
       const solPass = decrypt(cred.encryptedPass as string, cred.iv as string, cred.authTag as string);
-      sireToken = await provider.getSireToken(company.ruc as string, cred.solUser as string, solPass);
+      let clientId: string | undefined = cred.clientId as string || undefined;
+      let clientSecret: string | undefined;
+      if (cred.encClientSecret) {
+        try {
+          const p = JSON.parse(cred.encClientSecret as string) as { enc:string; iv:string; tag:string };
+          clientSecret = decrypt(p.enc, p.iv, p.tag);
+        } catch {}
+      }
+      sireToken = await provider.getSireToken(company.ruc as string, cred.solUser as string, solPass, clientId, clientSecret);
     } else {
       sireToken = await provider.getSireToken(company.ruc as string, '', '');
     }
@@ -43,7 +51,15 @@ export async function GET(req: NextRequest) {
     let sireToken:string;
     if (process.env.SUNAT_PROVIDER==='direct') {
       const solPass = decrypt(cred.encryptedPass as string, cred.iv as string, cred.authTag as string);
-      sireToken = await provider.getSireToken(company.ruc as string, cred.solUser as string, solPass);
+      const clientId: string | undefined = cred.clientId as string || undefined;
+      let clientSecret: string | undefined;
+      if (cred.encClientSecret) {
+        try {
+          const p = JSON.parse(cred.encClientSecret as string) as { enc:string; iv:string; tag:string };
+          clientSecret = decrypt(p.enc, p.iv, p.tag);
+        } catch {}
+      }
+      sireToken = await provider.getSireToken(company.ruc as string, cred.solUser as string, solPass, clientId, clientSecret);
     } else {
       sireToken = await provider.getSireToken(company.ruc as string, '', '');
     }

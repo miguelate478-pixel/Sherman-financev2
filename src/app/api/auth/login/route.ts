@@ -22,12 +22,14 @@ export async function POST(req: NextRequest) {
       action: 'LOGIN', ip: getIP(req),
     });
 
-    // Parse companyIds — null means access to ALL (Administrador)
+    // Parse companyIds — null means access to ALL companies
     let companyIds: string[] | null = null;
-    if (user.companyIds && user.role !== 'Administrador') {
-      try { companyIds = JSON.parse(user.companyIds as string); } catch { companyIds = []; }
-    } else if (user.companyIds && user.role === 'Administrador') {
-      try { companyIds = JSON.parse(user.companyIds as string); } catch { companyIds = null; }
+    if (user.companyIds) {
+      try { 
+        const parsed = JSON.parse(user.companyIds as string);
+        // Only restrict if it's a non-empty array
+        companyIds = Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+      } catch { companyIds = null; }
     }
 
     const token = await signToken({

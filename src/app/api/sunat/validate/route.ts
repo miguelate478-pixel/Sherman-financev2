@@ -1,16 +1,34 @@
 import { NextRequest } from 'next/server';
-import { findCompanyById, updateDocument, createAuditLog } from '@/lib/db';
+import { findCompanyById, updateDocument, createAuditLog, getCredentialByCompany } from '@/lib/db';
 import { getUser } from '@/lib/auth';
 import { ok, err, unauthorized } from '@/lib/response';
 import { getSunatProvider } from '@/lib/providers/sunat';
+import { decrypt } from '@/lib/crypto';
 
 export async function POST(req: NextRequest) {
   const user = await getUser(req);
   if (!user) return unauthorized();
   try {
-    const { ruc, numRuc, codComp, serie, numero, fecha, monto, documentId } = await req.json();
+    const { ruc, numRuc, codComp, serie, numero, fecha, monto, documentId, companyId } = await req.json();
     const provider = getSunatProvider();
-    const token    = await provider.getToken();
+
+    // Use credentials from DB if available
+    let clientId: string | undefined;
+    let clientSecret: string | undefined;
+    if (companyId && process.env.SUNAT_PROVIDER === 'direct') {
+      const cred = await getCredentialByCompany(companyId);
+      if (cred?.clientId) {
+        clientId = cred.clientId as string;
+        if (cred.encClientSecret) {
+          try {
+            const p = JSON.parse(cred.encClientSecret as string) as { enc:string; iv:string; tag:string };
+            clientSecret = decrypt(p.enc, p.iv, p.tag);
+          } catch {}
+        }
+      }
+    }
+
+    const token    = await provider.getToken(clientId, clientSecret);
     const queryRuc = ruc || numRuc;
     const result   = await provider.validateDocument({ ruc:queryRuc, token, numRuc, codComp, serie, numero, fecha, monto:parseFloat(monto)||0 });
     if (documentId) {
