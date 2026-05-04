@@ -621,7 +621,8 @@ function SunatCentroView({empresa,addToast,onNav}:{empresa:Company|null;addToast
         <div style={{fontSize:11,color:C.t4,marginBottom:'1rem'}}>Cifradas con AES-256-GCM · Nunca en texto plano</div>
 
         {existingCred&&<div style={{background: existingCred.status==='verified'?C.greenL:existingCred.status==='error'?C.redL:C.amberL, border:`1px solid ${existingCred.status==='verified'?C.greenM:existingCred.status==='error'?C.redM:C.amberM}`,borderRadius:8,padding:'.65rem .9rem',marginBottom:'1rem',fontSize:12,color:existingCred.status==='verified'?C.green:existingCred.status==='error'?C.red:C.amber}}>
-          {existingCred.status==='verified'?'🟢':'existingCred.status==='error'?'🔴':'🟡'} Credenciales configuradas · Usuario SOL: <strong>{existingCred.solUser}</strong> · Estado: <strong>{existingCred.status==='verified'?'Conectado':'existingCred.status==='error'?'Error de conexión':'Pendiente de verificación'}</strong>
+          {existingCred.status==='verified'?'🟢 ':existingCred.status==='error'?'🔴 ':'🟡 '}
+          Credenciales configuradas · Usuario SOL: <strong>{existingCred.solUser}</strong> · Estado: <strong>{existingCred.status==='verified'?'Conectado':existingCred.status==='error'?'Error de conexión':'Pendiente de verificación'}</strong>
         </div>}
 
         {[{l:'Usuario SOL',k:'solUser',ph:'20512345678TUUSUARIO'},{l:'Clave SOL',k:'solPass',ph:'••••••••',t:'password'},{l:'Client ID (Consulta Integrada + SIRE)',k:'clientId',ph:'Tu client_id de SOL'},{l:'Client Secret',k:'clientSecret',ph:'Tu client_secret de SOL',t:'password'}].map(f=>(
