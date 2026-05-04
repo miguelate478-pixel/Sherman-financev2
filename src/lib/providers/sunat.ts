@@ -367,7 +367,7 @@ export class DirectSunatProvider implements ISunatProvider {
     if (res.status === 401 && clientId && solUser !== undefined && solPass !== undefined) {
       console.log('[SIRE] 401 en propuesta — limpiando cache y reintentando con token fresco...');
       const body401 = await res.text();
-      console.log('[SIRE] 401 body:', body401.substring(0, 300));
+      console.log('[SIRE] 401 body:', body401.substring(0, 1000));
       const cacheKey = `sire-${ruc}-${clientId}`;
       sireTokenCache.delete(cacheKey);
       const freshToken = await this.getSireToken(ruc, solUser, solPass, clientId, clientSecret);
