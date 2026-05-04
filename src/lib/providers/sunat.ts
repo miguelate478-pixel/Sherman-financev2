@@ -158,11 +158,162 @@ export class DirectSunatProvider implements ISunatProvider {
   async bulkDownload(p: { ruc:string; period:string; operation:'COMPRAS'|'VENTAS'; documentTypes:string[]; sireToken?:string; solUser?:string; solPass?:string; clientId?:string; clientSecret?:string }): Promise<BulkResult> {
     const token = p.sireToken ?? await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', p.clientId, p.clientSecret);
     const tipo  = p.operation==='VENTAS' ? 'RVIE' : 'RCE';
+
+    // Solicitar propuesta SIRE
     const ticket = await this.getSirePropuesta(p.ruc, p.period, tipo, token);
-    let estado = ticket.estado; let attempts = 0;
-    while (estado!=='06' && estado!=='07' && attempts<20) { await sleep(2000); const t = await this.consultarTicket(ticket.numTicket, token); estado = t.estado; attempts++; }
-    if (estado==='07') throw new Error('SIRE ticket error');
-    return { period:p.period, operation:p.operation, docsFound:0, docsXml:0, docsPdf:0, docsCdr:0, errors:0, documents:[] };
+    console.log(`[SIRE] Ticket: ${ticket.numTicket} | Estado: ${ticket.estado}`);
+
+    // Polling hasta estado 06 (terminado)
+    let estado = ticket.estado;
+    let finalTicket = ticket;
+    let attempts = 0;
+    while (estado !== '06' && estado !== '07' && attempts < 30) {
+      await sleep(3000);
+      finalTicket = await this.consultarTicket(ticket.numTicket, token);
+      estado = finalTicket.estado;
+      attempts++;
+      console.log(`[SIRE] Polling ${attempts}: estado=${estado}`);
+    }
+
+    if (estado === '07') throw new Error('SIRE reportó error en el ticket');
+    if (estado !== '06') throw new Error(`SIRE no completó después de ${attempts} intentos. Estado: ${estado}`);
+
+    // Descargar el ZIP de la propuesta
+    const archivos = finalTicket.archivoReporte || [];
+    console.log(`[SIRE] Archivos disponibles: ${archivos.map(a => a.nomArchivoReporte).join(', ')}`);
+
+    const documents: SunatDocument[] = [];
+
+    for (const archivo of archivos) {
+      try {
+        const zipUrl = `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/descargaarchivo?nomArchivoReporte=${encodeURIComponent(archivo.nomArchivoReporte)}`;
+        const zipRes = await fetch(zipUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(30000),
+        });
+
+        if (!zipRes.ok) {
+          console.log(`[SIRE] Error descargando ${archivo.nomArchivoReporte}: HTTP ${zipRes.status}`);
+          continue;
+        }
+
+        const zipBuffer = Buffer.from(await zipRes.arrayBuffer());
+        console.log(`[SIRE] ZIP descargado: ${zipBuffer.length} bytes`);
+
+        // Parsear el ZIP para extraer documentos
+        const parsedDocs = await this.parseZipDocuments(zipBuffer, p.ruc, p.operation);
+        documents.push(...parsedDocs);
+        console.log(`[SIRE] Documentos extraídos del ZIP: ${parsedDocs.length}`);
+      } catch(e) {
+        console.log(`[SIRE] Error procesando archivo ${archivo.nomArchivoReporte}: ${(e as Error).message}`);
+      }
+    }
+
+    return {
+      period: p.period,
+      operation: p.operation,
+      docsFound: documents.length,
+      docsXml: documents.length,
+      docsPdf: 0,
+      docsCdr: 0,
+      errors: 0,
+      documents,
+    };
+  }
+
+  private async parseZipDocuments(zipBuffer: Buffer, ruc: string, operation: string): Promise<SunatDocument[]> {
+    const documents: SunatDocument[] = [];
+    try {
+      // Intentar parsear como ZIP usando la firma de bytes
+      const isZip = zipBuffer[0] === 0x50 && zipBuffer[1] === 0x4B;
+      if (!isZip) {
+        // Puede ser JSON o TXT directamente
+        const text = zipBuffer.toString('utf8');
+        try {
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) {
+            for (const item of data) {
+              const doc = this.mapSireItemToDocument(item, ruc, operation);
+              if (doc) documents.push(doc);
+            }
+          }
+        } catch {
+          console.log('[SIRE] Contenido no es ZIP ni JSON, longitud:', text.length);
+        }
+        return documents;
+      }
+
+      // Es un ZIP — usar adm-zip si está disponible, sino intentar con Buffer
+      try {
+        const AdmZip = require('adm-zip');
+        const zip = new AdmZip(zipBuffer);
+        const entries = zip.getEntries();
+        for (const entry of entries) {
+          if (entry.entryName.endsWith('.txt') || entry.entryName.endsWith('.json')) {
+            const content = entry.getData().toString('utf8');
+            const lines = content.split('\n').filter((l: string) => l.trim());
+            for (const line of lines) {
+              const doc = this.parseSireLine(line, ruc, operation);
+              if (doc) documents.push(doc);
+            }
+          }
+        }
+      } catch {
+        console.log('[SIRE] adm-zip no disponible, ZIP no procesado');
+      }
+    } catch(e) {
+      console.log('[SIRE] Error parseando ZIP:', (e as Error).message);
+    }
+    return documents;
+  }
+
+  private mapSireItemToDocument(item: Record<string,unknown>, ruc: string, operation: string): SunatDocument | null {
+    try {
+      return {
+        id: `${item.numSerie}-${item.numCpe}`,
+        ruc,
+        serie: String(item.numSerie || ''),
+        numero: String(item.numCpe || ''),
+        tipo: String(item.codTipoCpe || '01'),
+        fecha: String(item.fecEmision || ''),
+        total: parseFloat(String(item.mtoTotalCpe || 0)),
+        moneda: String(item.codMoneda || 'PEN'),
+        rsEmisor: operation === 'COMPRAS' ? String(item.rznSocialEmisor || '') : String(item.rznSocialReceptor || ruc),
+        rucEmisor: operation === 'COMPRAS' ? String(item.numRucEmisor || '') : ruc,
+        rsReceptor: operation === 'VENTAS' ? String(item.rznSocialReceptor || '') : ruc,
+        rucReceptor: operation === 'VENTAS' ? String(item.numRucReceptor || '') : ruc,
+        numDocCliente: operation === 'VENTAS' ? String(item.numRucReceptor || '') : undefined,
+        razonSocialCliente: operation === 'VENTAS' ? String(item.rznSocialReceptor || '') : undefined,
+        sunatStatus: 'ACEPTADO',
+        cdrStatus: 'OK',
+      };
+    } catch { return null; }
+  }
+
+  private parseSireLine(line: string, ruc: string, operation: string): SunatDocument | null {
+    // Formato PLE: campos separados por |
+    const parts = line.split('|');
+    if (parts.length < 10) return null;
+    try {
+      return {
+        id: `${parts[5]}-${parts[7]}`,
+        ruc,
+        serie: parts[5] || '',
+        numero: parts[7] || '',
+        tipo: parts[4] || '01',
+        fecha: parts[2] || '',
+        total: parseFloat(parts[20] || '0'),
+        moneda: parts[21] || 'PEN',
+        rsEmisor: operation === 'COMPRAS' ? (parts[11] || '') : ruc,
+        rucEmisor: operation === 'COMPRAS' ? (parts[10] || '') : ruc,
+        rsReceptor: operation === 'VENTAS' ? (parts[9] || '') : ruc,
+        rucReceptor: operation === 'VENTAS' ? (parts[8] || '') : ruc,
+        numDocCliente: operation === 'VENTAS' ? parts[8] : undefined,
+        razonSocialCliente: operation === 'VENTAS' ? parts[9] : undefined,
+        sunatStatus: 'ACEPTADO',
+        cdrStatus: 'OK',
+      };
+    } catch { return null; }
   }
 
   async getSirePropuesta(ruc: string, period: string, tipo: 'RVIE'|'RCE', token: string) {
