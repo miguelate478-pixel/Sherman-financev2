@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
     const sunat = getSunatProvider();
     const ai    = getAiProvider();
     let totalDocs=0,totalXml=0,totalPdf=0,totalCdr=0,totalErrors=0;
+    let lastError = '';
 
     let sireToken='';
     try {
@@ -113,9 +114,12 @@ export async function POST(req: NextRequest) {
           await updateBulkJobPeriod(jpId,{status:'COMPLETADO',docsFound:result.docsFound,docsXml:periodXml,docsPdf:periodPdf,docsCdr:periodCdr,errors:periodErrors,completedAt:new Date().toISOString()});
           totalDocs+=result.docsFound;totalXml+=periodXml;totalPdf+=periodPdf;totalCdr+=periodCdr;totalErrors+=periodErrors;
         } catch(e) {
-          console.error('[BULK ERROR] período:', period, 'op:', op, 'error:', (e as Error).message);
+          const errMsg = (e as Error).message;
+          console.error('[BULK ERROR] período:', period, 'op:', op, 'error:', errMsg);
           await updateBulkJobPeriod(jpId,{status:'ERROR',completedAt:new Date().toISOString()});
           totalErrors++;
+          // Guardar el último error para incluirlo en la respuesta
+          lastError = errMsg;
         }
       }
     }
@@ -123,7 +127,7 @@ export async function POST(req: NextRequest) {
     const finalStatus=totalErrors>0?'COMPLETADO_CON_ERRORES':'COMPLETADO';
     await updateBulkJob(jobId,{status:finalStatus,docsFound:totalDocs,docsXml:totalXml,docsPdf:totalPdf,docsCdr:totalCdr,errors:totalErrors,completedAt:new Date().toISOString()});
     await createAuditLog({userId:user.sub,userEmail:user.email,userRole:user.role,action:'BULK_DOWNLOAD_COMPLETADO',object:`${periodFrom}→${periodTo} ${operation} ${totalDocs}docs`,ip:getIP(req)});
-    return ok({jobId,status:finalStatus,totalDocs,totalXml,totalPdf,totalCdr,totalErrors});
+    return ok({jobId,status:finalStatus,totalDocs,totalXml,totalPdf,totalCdr,totalErrors,lastError:lastError||undefined});
   } catch(e) { return err(`Error: ${(e as Error).message}`,500); }
 }
 
