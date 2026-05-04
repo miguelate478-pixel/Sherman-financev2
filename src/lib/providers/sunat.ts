@@ -111,7 +111,7 @@ export class MockSunatProvider implements ISunatProvider {
 export class DirectSunatProvider implements ISunatProvider {
   private apiBase      = 'https://api-seguridad.sunat.gob.pe/v1';
   private validateBase = 'https://api.sunat.gob.pe/v1';
-  private sireBase     = 'https://apisire.sunat.gob.pe/v1';
+  private sireBase     = 'https://api-sire.sunat.gob.pe/v1';
 
   private async fetchWithRetry(url: string, options: RequestInit, maxRetries: number = 3): Promise<Response> {
     let lastError: Error | null = null;
@@ -158,7 +158,7 @@ export class DirectSunatProvider implements ISunatProvider {
     const url = `https://api-seguridad.sunat.gob.pe/v1/clientessol/${cId}/oauth2/token/`;
     const params = new URLSearchParams({
       grant_type:    'password',
-      scope:         'https://apisire.sunat.gob.pe',
+      scope:         'https://api-sire.sunat.gob.pe',
       client_id:     cId,
       client_secret: cSec,
       username:      `${ruc}${solUser}`,
