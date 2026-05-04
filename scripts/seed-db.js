@@ -5,7 +5,11 @@ const { randomBytes, createCipheriv } = require('crypto');
 const bcrypt = require('bcryptjs');
 const path   = require('path');
 
-const db = new DatabaseSync(path.join(process.cwd(), 'prisma', 'dev.db'));
+const rawUrl = process.env.DATABASE_URL || 'file:./prisma/dev.db';
+const dbFile = rawUrl.replace(/^file:/, '');
+const DB_PATH = path.isAbsolute(dbFile) ? dbFile : path.join(process.cwd(), dbFile);
+
+const db = new DatabaseSync(DB_PATH);
 console.log('\n🌱 Cargando datos demo...\n');
 
 const uid  = () => 'c' + randomBytes(10).toString('hex');

@@ -6,7 +6,10 @@ const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 const fs   = require('fs');
 
-const DB_PATH = path.join(process.cwd(), 'prisma', 'dev.db');
+// Leer ruta desde DATABASE_URL o usar default local
+const rawUrl = process.env.DATABASE_URL || 'file:./prisma/dev.db';
+const dbFile = rawUrl.replace(/^file:/, '');
+const DB_PATH = path.isAbsolute(dbFile) ? dbFile : path.join(process.cwd(), dbFile);
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const db = new DatabaseSync(DB_PATH);
@@ -121,4 +124,4 @@ const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").a
 console.log('  Tablas creadas:', tables.length);
 tables.forEach(t => console.log('   ✓', t.name));
 db.close();
-console.log('\n✅ Base de datos inicializada en prisma/dev.db\n');
+console.log('\n✅ Base de datos inicializada en ' + DB_PATH + '\n');
