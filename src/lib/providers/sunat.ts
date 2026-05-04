@@ -190,11 +190,23 @@ export class DirectSunatProvider implements ISunatProvider {
   }
 
   async bulkDownload(p: { ruc:string; period:string; operation:'COMPRAS'|'VENTAS'; documentTypes:string[]; sireToken?:string; solUser?:string; solPass?:string; clientId?:string; clientSecret?:string }): Promise<BulkResult> {
-    const token = p.sireToken ?? await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', p.clientId, p.clientSecret);
+    let token = p.sireToken ?? await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', p.clientId, p.clientSecret);
     const tipo  = p.operation==='VENTAS' ? 'RVIE' : 'RCE';
 
-    // Solicitar propuesta SIRE
-    const ticket = await this.getSirePropuesta(p.ruc, p.period, tipo, token);
+    // Solicitar propuesta SIRE — refresh token and retry once on 401
+    let ticket: { numTicket:string; estado:string; archivoReporte?:{ nomArchivoReporte:string }[] };
+    try {
+      ticket = await this.getSirePropuesta(p.ruc, p.period, tipo, token);
+    } catch (e) {
+      if ((e as Error).message.includes('401')) {
+        console.log(`[SIRE] Token expirado en propuesta (401), obteniendo token nuevo...`);
+        token = await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', p.clientId, p.clientSecret);
+        console.log(`[SIRE] Token renovado, reintentando propuesta...`);
+        ticket = await this.getSirePropuesta(p.ruc, p.period, tipo, token);
+      } else {
+        throw e;
+      }
+    }
     console.log(`[SIRE] Ticket: ${ticket.numTicket} | Estado: ${ticket.estado}`);
 
     // Polling hasta estado 06 (terminado)
@@ -221,10 +233,21 @@ export class DirectSunatProvider implements ISunatProvider {
     for (const archivo of archivos) {
       try {
         const zipUrl = `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/descargaarchivo?nomArchivoReporte=${encodeURIComponent(archivo.nomArchivoReporte)}`;
-        const zipRes = await this.fetchWithRetry(zipUrl, {
+        let zipRes = await this.fetchWithRetry(zipUrl, {
           headers: { Authorization: `Bearer ${token}` },
           signal: AbortSignal.timeout(60000), // Increase to 60 seconds
         }, 3);
+
+        // If token expired during polling, refresh and retry the download once
+        if (zipRes.status === 401) {
+          console.log(`[SIRE] Token expirado en descarga ZIP (401), obteniendo token nuevo...`);
+          token = await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', p.clientId, p.clientSecret);
+          console.log(`[SIRE] Token renovado, reintentando descarga ZIP...`);
+          zipRes = await fetch(zipUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(60000),
+          });
+        }
 
         if (!zipRes.ok) {
           console.log(`[SIRE] Error descargando ${archivo.nomArchivoReporte}: HTTP ${zipRes.status}`);
