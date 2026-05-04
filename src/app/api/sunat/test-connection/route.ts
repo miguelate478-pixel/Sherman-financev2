@@ -85,13 +85,21 @@ export async function GET(req: NextRequest) {
     tokenResult = {
       status:    tokenRes.status,
       ok:        tokenRes.ok,
-      body:      tokenBody.substring(0, 500),
+      body:      tokenBody, // full body
     };
     if (tokenRes.ok) {
       const j = JSON.parse(tokenBody) as { access_token: string; expires_in: number };
       token = j.access_token;
+      // Decodificar JWT payload para ver recursos autorizados
+      const parts = token.split('.');
+      let jwtPayload = '';
+      try {
+        const padded = parts[1] + '=='.slice((parts[1].length + 2) % 4 || 4);
+        jwtPayload = Buffer.from(padded, 'base64').toString('utf8');
+      } catch {}
       tokenResult.expires_in  = j.expires_in;
       tokenResult.token_start = token.substring(0, 40) + '...';
+      tokenResult.jwt_payload = jwtPayload; // recursos autorizados completos
     }
   } catch (e) {
     tokenResult = { error: (e as Error).message };
