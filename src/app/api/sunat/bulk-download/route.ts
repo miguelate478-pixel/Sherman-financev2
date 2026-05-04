@@ -122,12 +122,12 @@ export async function POST(req: NextRequest) {
           await updateBulkJobPeriod(jpId,{status:'COMPLETADO',docsFound:result.docsFound,docsXml:periodXml,docsPdf:periodPdf,docsCdr:periodCdr,errors:periodErrors,completedAt:new Date().toISOString()});
           totalDocs+=result.docsFound;totalXml+=periodXml;totalPdf+=periodPdf;totalCdr+=periodCdr;totalErrors+=periodErrors;
         } catch(e) {
-          console.error('[BULK ERROR] período:', period, 'op:', op);
-          console.error('[BULK ERROR] mensaje:', (e as Error).message);
+          const errMsg = (e as Error).message;
+          console.error('[BULK ERROR] período:', period, 'op:', op, 'mensaje:', errMsg);
           console.error('[BULK ERROR] stack:', (e as Error).stack?.split('\n')[1]);
-          await updateBulkJobPeriod(jpId,{status:'ERROR',completedAt:new Date().toISOString()});
+          await updateBulkJobPeriod(jpId, {status:'ERROR', completedAt: new Date().toISOString()});
           totalErrors++;
-          lastError = (e as Error).message;
+          lastError = errMsg;
         }
       }
     }
