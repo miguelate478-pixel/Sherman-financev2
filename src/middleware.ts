@@ -16,14 +16,17 @@ export async function middleware(req: NextRequest) {
   // Allow static files
   if (pathname.startsWith('/_next') || pathname.startsWith('/favicon')) return NextResponse.next();
 
-  // For API routes: check Authorization header
+  // For API routes: check Authorization header OR token query param (for direct downloads)
   if (pathname.startsWith('/api/')) {
     const auth = req.headers.get('Authorization');
-    if (!auth?.startsWith('Bearer ')) {
+    const qToken = req.nextUrl.searchParams.get('token');
+    const rawToken = auth?.startsWith('Bearer ') ? auth.slice(7) : qToken;
+
+    if (!rawToken) {
       return NextResponse.json({ ok: false, error: 'No autorizado' }, { status: 401 });
     }
     try {
-      await jwtVerify(auth.slice(7), secret);
+      await jwtVerify(rawToken, secret);
       return NextResponse.next();
     } catch {
       return NextResponse.json({ ok: false, error: 'Token inválido o expirado' }, { status: 401 });
