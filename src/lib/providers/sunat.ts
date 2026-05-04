@@ -127,7 +127,10 @@ export class DirectSunatProvider implements ISunatProvider {
       method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
       body: new URLSearchParams({ grant_type:'client_credentials', scope:`${this.validateBase}/contribuyente/contribuyentes`, client_id:cId, client_secret:cSecret }),
     });
-    if (!res.ok) throw new Error(`SUNAT CPE token error ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`SUNAT CPE token error ${res.status}: ${body}`);
+    }
     const j = await res.json() as { access_token:string; expires_in:number };
     setCache(key, j.access_token, j.expires_in);
     return j.access_token;
