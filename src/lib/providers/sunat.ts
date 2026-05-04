@@ -350,10 +350,11 @@ export class DirectSunatProvider implements ISunatProvider {
   async getSirePropuesta(ruc: string, period: string, tipo: 'RVIE'|'RCE', token: string, clientId?: string, solUser?: string, solPass?: string, clientSecret?: string) {
     // Formato YYYYMM según manual SIRE v25 (ej: "2025-12" → "202512")
     const per = period.replace('-','');
+    // RUC va en la ruta según API SIRE
     const ep  = tipo==='RVIE'
-      ? `/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${per}/exportapropuesta?codTipoArchivo=0`
-      : `/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${per}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`;
-    console.log(`[SIRE] Propuesta ${tipo} período ${per}: ${this.sireBase}${ep}`);
+      ? `/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${ruc}/${per}/exportapropuesta?codTipoArchivo=0`
+      : `/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${ruc}/${per}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`;
+    console.log(`[SIRE] Propuesta ${tipo} RUC ${ruc} período ${per}: ${this.sireBase}${ep}`);
 
     const doRequest = async (tkn: string) => fetch(`${this.sireBase}${ep}`, {
       headers: this.sireHeaders(tkn),
@@ -365,6 +366,8 @@ export class DirectSunatProvider implements ISunatProvider {
     // Si 401, limpiar cache y reintentar con token fresco
     if (res.status === 401 && clientId && solUser !== undefined && solPass !== undefined) {
       console.log('[SIRE] 401 en propuesta — limpiando cache y reintentando con token fresco...');
+      const body401 = await res.text();
+      console.log('[SIRE] 401 body:', body401.substring(0, 300));
       const cacheKey = `sire-${ruc}-${clientId}`;
       sireTokenCache.delete(cacheKey);
       const freshToken = await this.getSireToken(ruc, solUser, solPass, clientId, clientSecret);
