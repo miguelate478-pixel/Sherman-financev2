@@ -36,11 +36,13 @@ export interface ISunatProvider {
   downloadXml(ruc: string, documentId: string, storagePath?: string): Promise<DownloadResult>;
   downloadPdf(ruc: string, documentId: string, storagePath?: string): Promise<DownloadResult>;
   downloadCdr(ruc: string, documentId: string, storagePath?: string): Promise<DownloadResult>;
-  getSirePropuesta(ruc: string, period: string, tipo: 'RVIE'|'RCE', sireToken: string): Promise<{ numTicket: string; estado: string; archivoReporte?: { nomArchivoReporte: string }[] }>;
+  getSirePropuesta(ruc: string, period: string, tipo: 'RVIE'|'RCE', sireToken: string, clientId?: string, solUser?: string, solPass?: string, clientSecret?: string): Promise<{ numTicket: string; estado: string; archivoReporte?: { nomArchivoReporte: string }[] }>;
   consultarTicket(ticket: string, sireToken: string): Promise<{ numTicket: string; estado: string; archivoReporte?: { nomArchivoReporte: string }[] }>;
 }
 
-// No cache — always get fresh token to avoid stale/invalid token issues
+// Cache de tokens SIRE por clientId+ruc
+const sireTokenCache = new Map<string, { token: string; expiresAt: number }>();
+
 export function getStoragePath(ruc: string, period: string, operation: string, tipo: string, docId: string): string {
   const base = process.env.STORAGE_PATH ?? './storage';
   return path.join(base, 'sunat', ruc, period, operation.toLowerCase(), tipo, docId.replace(/\//g, '-'));
@@ -104,7 +106,7 @@ export class MockSunatProvider implements ISunatProvider {
     if (storagePath) { try { saveFile(storagePath,'cdr.xml',cdr); } catch {} }
     return { cdrContent:cdr, hash:sha256(cdr), success:true };
   }
-  async getSirePropuesta(_r: string, period: string, tipo: string, _t: string) { return { numTicket:`TICK-${tipo}-${period}-${Date.now()}`, estado:'06', archivoReporte:[{ nomArchivoReporte:`${tipo}_${period}.zip` }] }; }
+  async getSirePropuesta(_r: string, period: string, tipo: string, _t: string, _cId?: string, _su?: string, _sp?: string, _cs?: string) { return { numTicket:`TICK-${tipo}-${period}-${Date.now()}`, estado:'06', archivoReporte:[{ nomArchivoReporte:`${tipo}_${period}.zip` }] }; }
   async consultarTicket(ticket: string, _t: string) { return { numTicket:ticket, estado:'06' }; }
 }
 
@@ -112,6 +114,20 @@ export class DirectSunatProvider implements ISunatProvider {
   private apiBase      = 'https://api-seguridad.sunat.gob.pe/v1';
   private validateBase = 'https://api.sunat.gob.pe/v1';
   private sireBase     = 'https://api-sire.sunat.gob.pe/v1';
+
+  private sireHeaders(token: string): Record<string, string> {
+    return {
+      'Authorization':    `Bearer ${token}`,
+      'Accept':           'application/json, text/plain, */*',
+      'Accept-Language':  'es-419,es;q=0.9',
+      'User-Agent':       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+      'Origin':           'https://e-factura.sunat.gob.pe',
+      'Referer':          'https://e-factura.sunat.gob.pe/',
+      'Sec-Fetch-Dest':   'empty',
+      'Sec-Fetch-Mode':   'cors',
+      'Sec-Fetch-Site':   'same-site',
+    };
+  }
 
   private async fetchWithRetry(url: string, options: RequestInit, maxRetries: number = 3): Promise<Response> {
     let lastError: Error | null = null;
@@ -155,6 +171,15 @@ export class DirectSunatProvider implements ISunatProvider {
     const cId  = clientId  || '';
     const cSec = clientSecret || '';
     if (!cId || !cSec) throw new Error('Client ID y Client Secret requeridos.');
+
+    // Cache: reutilizar token si no ha expirado (con 60s de margen)
+    const cacheKey = `sire-${ruc}-${cId}`;
+    const cached = sireTokenCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt - 60000) {
+      console.log('[SIRE] Token desde cache para RUC:', ruc);
+      return cached.token;
+    }
+
     const res = await fetch(`${this.apiBase}/clientessol/${cId}/oauth2/token/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -172,8 +197,13 @@ export class DirectSunatProvider implements ISunatProvider {
       const body = await res.text();
       throw new Error(`SIRE token error ${res.status}: ${body}`);
     }
-    const j = await res.json() as { access_token: string };
-    console.log('[SIRE] Token obtenido OK para RUC:', ruc);
+    const j = await res.json() as { access_token: string; expires_in: number };
+    // Guardar en cache con tiempo de expiración
+    sireTokenCache.set(cacheKey, {
+      token: j.access_token,
+      expiresAt: Date.now() + (j.expires_in * 1000),
+    });
+    console.log('[SIRE] Token obtenido OK para RUC:', ruc, '| expires_in:', j.expires_in, 's');
     return j.access_token;
   }
 
@@ -191,8 +221,8 @@ export class DirectSunatProvider implements ISunatProvider {
     const token = p.sireToken ?? await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', p.clientId, p.clientSecret);
     const tipo  = p.operation==='VENTAS' ? 'RVIE' : 'RCE';
 
-    // Solicitar propuesta SIRE
-    const ticket = await this.getSirePropuesta(p.ruc, p.period, tipo, token);
+    // Solicitar propuesta SIRE (con auto-refresh en 401)
+    const ticket = await this.getSirePropuesta(p.ruc, p.period, tipo, token, p.clientId, p.solUser, p.solPass, p.clientSecret);
     console.log(`[SIRE] Ticket: ${ticket.numTicket} | Estado: ${ticket.estado}`);
 
     // Polling hasta estado 06 (terminado)
@@ -220,7 +250,7 @@ export class DirectSunatProvider implements ISunatProvider {
       try {
         const zipUrl = `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/descargaarchivo?nomArchivoReporte=${encodeURIComponent(archivo.nomArchivoReporte)}`;
         const zipRes = await this.fetchWithRetry(zipUrl, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: this.sireHeaders(token),
           signal: AbortSignal.timeout(60000), // Increase to 60 seconds
         }, 3);
 
@@ -317,17 +347,30 @@ export class DirectSunatProvider implements ISunatProvider {
     };
   }
 
-  async getSirePropuesta(ruc: string, period: string, tipo: 'RVIE'|'RCE', token: string) {
+  async getSirePropuesta(ruc: string, period: string, tipo: 'RVIE'|'RCE', token: string, clientId?: string, solUser?: string, solPass?: string, clientSecret?: string) {
     // Formato YYYYMM según manual SIRE v25 (ej: "2025-12" → "202512")
     const per = period.replace('-','');
     const ep  = tipo==='RVIE'
       ? `/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${per}/exportapropuesta?codTipoArchivo=0`
       : `/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${per}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`;
     console.log(`[SIRE] Propuesta ${tipo} período ${per}: ${this.sireBase}${ep}`);
-    const res = await fetch(`${this.sireBase}${ep}`, {
-      headers:{ Authorization:`Bearer ${token}`, Accept:'application/json' },
+
+    const doRequest = async (tkn: string) => fetch(`${this.sireBase}${ep}`, {
+      headers: this.sireHeaders(tkn),
       signal: AbortSignal.timeout(15000),
     });
+
+    let res = await doRequest(token);
+
+    // Si 401, limpiar cache y reintentar con token fresco
+    if (res.status === 401 && clientId && solUser !== undefined && solPass !== undefined) {
+      console.log('[SIRE] 401 en propuesta — limpiando cache y reintentando con token fresco...');
+      const cacheKey = `sire-${ruc}-${clientId}`;
+      sireTokenCache.delete(cacheKey);
+      const freshToken = await this.getSireToken(ruc, solUser, solPass, clientId, clientSecret);
+      res = await doRequest(freshToken);
+    }
+
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`SIRE propuesta error ${res.status}: ${body}`);
@@ -338,7 +381,7 @@ export class DirectSunatProvider implements ISunatProvider {
   async consultarTicket(ticket: string, token: string) {
     const res = await fetch(
       `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?numTicket=${ticket}`,
-      { headers:{ Authorization:`Bearer ${token}` }, signal: AbortSignal.timeout(10000) }
+      { headers: this.sireHeaders(token), signal: AbortSignal.timeout(10000) }
     );
     const data = await res.json() as {
       numTicket: string;
