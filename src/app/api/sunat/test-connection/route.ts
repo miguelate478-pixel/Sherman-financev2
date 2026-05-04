@@ -99,24 +99,33 @@ export async function GET(req: NextRequest) {
 
   if (!token) return ok({ server: 'Railway', connectivity, ruc, solUser, clientId, tokenResult });
 
-  // 4. Probar propuesta SIRE
-  const ep = tipo === 'RVIE'
-    ? `https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${ruc}/${period}/exportapropuesta?codTipoArchivo=0`
-    : `https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${ruc}/${period}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`;
+  // 4. Probar MÚLTIPLES variantes de URL de propuesta SIRE
+  const variants = tipo === 'RVIE' ? [
+    // Con RUC en URL (versión actual)
+    `https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${ruc}/${period}/exportapropuesta?codTipoArchivo=0`,
+    // Sin RUC en URL (versión original)
+    `https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${period}/exportapropuesta?codTipoArchivo=0`,
+    // Variante con /rvie/web/
+    `https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rvie/web/propuesta/${ruc}/${period}/exportapropuesta?codTipoArchivo=0`,
+  ] : [
+    // Con RUC en URL (versión actual)
+    `https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${ruc}/${period}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`,
+    // Sin RUC en URL (versión original)
+    `https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${period}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`,
+    // Variante con /rce/web/
+    `https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rce/web/propuesta/${ruc}/${period}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`,
+  ];
 
-  let propuestaResult: Record<string, unknown> = {};
-  try {
-    const r = await fetch(ep, { headers: SIRE_HEADERS(token), signal: AbortSignal.timeout(15000) });
-    const body = await r.text();
-    propuestaResult = {
-      url:    ep,
-      status: r.status,
-      ok:     r.ok,
-      body:   body.substring(0, 1000),
-    };
-  } catch (e) {
-    propuestaResult = { url: ep, error: (e as Error).message };
+  const propuestaResults: Record<string, unknown>[] = [];
+  for (const ep of variants) {
+    try {
+      const r = await fetch(ep, { headers: SIRE_HEADERS(token), signal: AbortSignal.timeout(15000) });
+      const body = await r.text();
+      propuestaResults.push({ url: ep, status: r.status, ok: r.ok, body: body.substring(0, 500) });
+    } catch (e) {
+      propuestaResults.push({ url: ep, error: (e as Error).message });
+    }
   }
 
-  return ok({ server: 'Railway', connectivity, ruc, solUser, clientId, tokenResult, propuestaResult });
+  return ok({ server: 'Railway', connectivity, ruc, solUser, clientId, tokenResult, propuestaResults });
 }
