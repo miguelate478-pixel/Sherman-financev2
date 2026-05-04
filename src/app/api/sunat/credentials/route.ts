@@ -28,13 +28,30 @@ export async function POST(req: NextRequest) {
   if (!user) return unauthorized();
   try {
     const { companyId, solUser, solPass, clientId, clientSecret } = await req.json();
-    if (!companyId || !solUser || !solPass) return err('companyId, solUser y solPass requeridos');
+    if (!companyId || !solUser) return err('companyId y solUser requeridos');
 
-    const { encrypted: encPass, iv: ivPass, authTag: tagPass } = encrypt(solPass);
+    // Si no viene solPass, mantener la contraseña existente
+    const existing = await getCredentialByCompany(companyId);
+    if (!solPass && !existing) return err('solPass requerido para la primera configuración');
+
+    let encPass: string, ivPass: string, tagPass: string;
+    if (solPass) {
+      const e = encrypt(solPass);
+      encPass = e.encrypted; ivPass = e.iv; tagPass = e.authTag;
+    } else {
+      // Mantener la contraseña existente
+      encPass  = existing!.encryptedPass as string;
+      ivPass   = existing!.iv as string;
+      tagPass  = existing!.authTag as string;
+    }
+
     let encClientSecret: string | null = null;
     if (clientSecret) {
       const e = encrypt(clientSecret);
       encClientSecret = JSON.stringify({ enc: e.encrypted, iv: e.iv, tag: e.authTag });
+    } else if (existing?.encClientSecret) {
+      // Mantener el client secret existente
+      encClientSecret = existing.encClientSecret as string;
     }
 
     await upsertCredential(companyId, {
@@ -42,7 +59,7 @@ export async function POST(req: NextRequest) {
       encryptedPass: encPass,
       iv: ivPass,
       authTag: tagPass,
-      clientId: clientId || null,
+      clientId: clientId || existing?.clientId || null,
       encClientSecret,
     });
 

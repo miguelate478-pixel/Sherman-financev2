@@ -565,7 +565,11 @@ function SunatCentroView({empresa,addToast,onNav}:{empresa:Company|null;addToast
   const saveCredentials=async()=>{
     if(!empresa?.id){addToast('Selecciona empresa','error');return;}
     setSaving(true);
-    const r=await API.saveCredentials({companyId:empresa.id,...creds});
+    // Si el campo de contraseña está vacío y ya existe credencial, no lo enviamos (mantener la actual)
+    const payload: Record<string,string> = {companyId:empresa.id, solUser:creds.solUser, clientId:creds.clientId};
+    if(creds.solPass) payload.solPass = creds.solPass;
+    if(creds.clientSecret) payload.clientSecret = creds.clientSecret;
+    const r=await API.saveCredentials(payload);
     setSaving(false);
     if(r.ok){addToast('Credenciales guardadas (SOL cifrado AES-256-GCM)','success');API.getCredentials(empresa.id).then(d=>{if(d.ok&&d.data)setExistingCred(d.data);});}
     else addToast(r.error||'Error','error');
@@ -625,10 +629,19 @@ function SunatCentroView({empresa,addToast,onNav}:{empresa:Company|null;addToast
           Credenciales configuradas · Usuario SOL: <strong>{existingCred.solUser}</strong> · Estado: <strong>{existingCred.status==='verified'?'Conectado':existingCred.status==='error'?'Error de conexión':'Pendiente de verificación'}</strong>
         </div>}
 
-        {[{l:'Usuario SOL',k:'solUser',ph:'20512345678TUUSUARIO'},{l:'Clave SOL',k:'solPass',ph:'••••••••',t:'password'},{l:'Client ID (Consulta Integrada + SIRE)',k:'clientId',ph:'Tu client_id de SOL'},{l:'Client Secret',k:'clientSecret',ph:'Tu client_secret de SOL',t:'password'}].map(f=>(
+        {[{l:'Usuario SOL',k:'solUser',ph:'20512345678TUUSUARIO'},{l:'Clave SOL',k:'solPass',ph:'Ingresa nueva clave SOL',t:'password',saved:!!existingCred},{l:'Client ID (Consulta Integrada + SIRE)',k:'clientId',ph:'Tu client_id de SOL'},{l:'Client Secret',k:'clientSecret',ph:'Ingresa nuevo client secret',t:'password',saved:!!existingCred}].map(f=>(
           <div key={f.k} style={{marginBottom:'.75rem'}}>
-            <label style={{display:'block',fontSize:10,fontWeight:700,color:C.t3,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{f.l}</label>
-            <input type={f.t||'text'} value={creds[f.k as keyof typeof creds]} onChange={e=>setCreds(p=>({...p,[f.k]:e.target.value}))} placeholder={f.ph} style={inpS}/>
+            <label style={{display:'block',fontSize:10,fontWeight:700,color:C.t3,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>
+              {f.l}{f.saved&&!creds[f.k as keyof typeof creds]&&<span style={{marginLeft:6,fontSize:9,fontWeight:600,color:C.green,background:C.greenM,padding:'1px 6px',borderRadius:4,textTransform:'none',letterSpacing:0}}>✓ ya configurada</span>}
+            </label>
+            <input
+              type={f.t||'text'}
+              value={creds[f.k as keyof typeof creds]}
+              onChange={e=>setCreds(p=>({...p,[f.k]:e.target.value}))}
+              placeholder={f.saved&&!creds[f.k as keyof typeof creds]?'Dejar vacío para mantener la actual':f.ph}
+              style={inpS}
+              autoComplete={f.t==='password'?'new-password':'off'}
+            />
           </div>
         ))}
 
