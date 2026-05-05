@@ -352,8 +352,8 @@ export class DirectSunatProvider implements ISunatProvider {
     const per = period.replace('-','');
     // RUC va en la ruta según API SIRE
     const ep  = tipo==='RVIE'
-      ? `/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${ruc}/${per}/exportapropuesta?codTipoArchivo=0`
-      : `/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${ruc}/${per}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`;
+      ? `/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/${per}/exportapropuesta?codTipoArchivo=0`
+      : `/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/${per}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`;
     console.log(`[SIRE] Propuesta ${tipo} RUC ${ruc} período ${per}: ${this.sireBase}${ep}`);
     console.log(`[SIRE] Token (primeros 40 chars): ${token.substring(0, 40)}...`);
 
