@@ -391,7 +391,7 @@ export class DirectSunatProvider implements ISunatProvider {
 
   async consultarTicket(ticket: string, token: string) {
     const res = await fetch(
-      `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?numTicket=${ticket}`,
+      `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?numTicket=${ticket}&page=1&perPage=10&perIni=1&perFin=10`,
       { headers: this.sireHeaders(token), signal: AbortSignal.timeout(10000) }
     );
     const rawText = await res.text();
