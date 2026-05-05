@@ -411,27 +411,32 @@ export class DirectSunatProvider implements ISunatProvider {
     const data = JSON.parse(rawText) as {
       numTicket: string;
       estado: string;
-      codProceso?: number;
+      codProceso?: string | number;
+      codEstadoProceso?: string;
+      desEstadoProceso?: string;
       archivoReporte?: { nomArchivoReporte: string }[];
-      registros?: { codProceso: number; archivoReporte?: { nomArchivoReporte: string }[] }[];
+      registros?: {
+        codProceso?: string | number;
+        codEstadoProceso?: string;
+        archivoReporte?: { nomArchivoReporte: string }[];
+      }[];
     };
-    // Según manual SIRE v25: codProceso 3=OK, 4=con observaciones, 2=en proceso
-    const codProceso = data.codProceso ?? data.registros?.[0]?.codProceso;
-    const archivoReporte = data.archivoReporte ?? data.registros?.[0]?.archivoReporte;
-    console.log(`[SIRE] consultarTicket codProceso=${codProceso} archivoReporte=${JSON.stringify(archivoReporte)}`);
-    if (codProceso === 3 || codProceso === 4) {
+
+    const registro = data.registros?.[0] ?? data;
+    const codEstado = registro.codEstadoProceso ?? data.codEstadoProceso;
+    const archivoReporte = registro.archivoReporte ?? data.archivoReporte;
+
+    console.log(`[SIRE] consultarTicket codEstadoProceso=${codEstado} archivos=${archivoReporte?.length ?? 0}`);
+
+    // codEstadoProceso "06" = Terminado, "07" = Error
+    if (codEstado === '06') {
       return { ...data, archivoReporte, estado: '06' };
     }
-    if (codProceso === 1) {
-      // Error en SIRE
-      console.error('[SIRE] codProceso=1 indica error en el proceso');
+    if (codEstado === '07') {
       return { ...data, estado: '07' };
     }
-    if (codProceso !== undefined && codProceso !== 2) {
-      console.log(`[SIRE] codProceso desconocido: ${codProceso} — tratando como en proceso`);
-      return { ...data, estado: undefined as unknown as string };
-    }
-    return data;
+    // En proceso o desconocido — seguir polling
+    return { ...data, estado: undefined as unknown as string };
   }
 
   async downloadXml(_ruc: string, _id: string, _sp?: string): Promise<DownloadResult> { return { success:false, error:'XML via SIRE propuesta ZIP' }; }
