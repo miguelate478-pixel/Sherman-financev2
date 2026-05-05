@@ -223,18 +223,19 @@ export class DirectSunatProvider implements ISunatProvider {
 
     // Solicitar propuesta SIRE (con auto-refresh en 401)
     const ticket = await this.getSirePropuesta(p.ruc, p.period, tipo, token, p.clientId, p.solUser, p.solPass, p.clientSecret);
-    console.log(`[SIRE] Ticket: ${ticket.numTicket} | Estado: ${ticket.estado}`);
+    console.log(`[SIRE] Ticket: ${ticket.numTicket} | Estado inicial: ${ticket.estado ?? 'undefined - iniciando polling'}`);
 
     // Polling hasta estado 06 (terminado)
+    // Si estado es undefined (SUNAT solo devuelve numTicket), empezar polling inmediatamente
     let estado = ticket.estado;
     let finalTicket = ticket;
     let attempts = 0;
-    while (estado !== '06' && estado !== '07' && attempts < 30) {
+    while ((estado === undefined || (estado !== '06' && estado !== '07')) && attempts < 30) {
       await sleep(3000);
       finalTicket = await this.consultarTicket(ticket.numTicket, token);
       estado = finalTicket.estado;
       attempts++;
-      console.log(`[SIRE] Polling ${attempts}: estado=${estado}`);
+      console.log(`[SIRE] Polling ${attempts}: estado=${estado} | codProceso=${(finalTicket as Record<string,unknown>).codProceso ?? 'N/A'}`);
     }
 
     if (estado === '07') throw new Error('SIRE reportó error en el ticket');
@@ -393,7 +394,9 @@ export class DirectSunatProvider implements ISunatProvider {
       `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?numTicket=${ticket}`,
       { headers: this.sireHeaders(token), signal: AbortSignal.timeout(10000) }
     );
-    const data = await res.json() as {
+    const rawText = await res.text();
+    console.log(`[SIRE] consultarTicket HTTP ${res.status} raw:`, rawText.substring(0, 500));
+    const data = JSON.parse(rawText) as {
       numTicket: string;
       estado: string;
       codProceso?: number;
