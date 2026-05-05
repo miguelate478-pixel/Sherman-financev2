@@ -92,6 +92,8 @@ const API = {
 const C = { bg:'#F8FAFC',card:'#FFFFFF',border:'#E2E8F0',border2:'#CBD5E1',navy:'#0F172A',navyM:'#1E293B',navyL:'#334155',blue:'#2563EB',blueL:'#EFF6FF',blueM:'#DBEAFE',blueD:'#1D4ED8',green:'#16A34A',greenL:'#F0FDF4',greenM:'#DCFCE7',amber:'#D97706',amberL:'#FFFBEB',amberM:'#FEF3C7',red:'#DC2626',redL:'#FEF2F2',redM:'#FEE2E2',violet:'#7C3AED',violetL:'#F5F3FF',violetM:'#EDE9FE',teal:'#0F766E',tealL:'#F0FDFA',tealM:'#CCFBF1',t1:'#111827',t2:'#374151',t3:'#6B7280',t4:'#9CA3AF',t5:'#D1D5DB' };
 const fmt  = (n:number, m='PEN') => new Intl.NumberFormat('es-PE',{style:'currency',currency:m==='USD'?'USD':'PEN',minimumFractionDigits:2}).format(n||0);
 const fmtN = (n:number) => new Intl.NumberFormat('es-PE').format(n||0);
+// Períodos disponibles — generado una sola vez al cargar
+const PERIOD_OPTIONS:string[]=['2026-05','2026-04','2026-03','2026-02','2026-01','2025-12','2025-11','2025-10','2025-09','2025-08','2025-07','2025-06','2025-05','2025-04','2025-03','2025-02','2025-01','2024-12','2024-11','2024-10','2024-09','2024-08','2024-07','2024-06','2024-05','2024-04','2024-03','2024-02','2024-01'];
 const sleep = (ms:number) => new Promise(r=>setTimeout(r,ms));
 const colEst = (s:string) => { if(['ACEPTADO','APROBADO','OK','LISTO','COBRADO','PAGADO','DEPOSITADO','COMPLETADO','EXPORTADO','activo','configuradas','PARSEADO','CLASIFICADO'].includes(s)) return 'green'; if(['OBSERVADO','ERROR','VENCIDO','BLOQUEADO','NULA','sin_configurar','revocado','RECHAZADO'].includes(s)) return 'red'; if(['PENDIENTE','PENDIENTE_REVISION','POR_VENCER','EN_PROCESO','pendiente'].includes(s)) return 'amber'; if(['VALIDADO','PARSEADO','PREPARADO','LISTO_BANDEJA'].includes(s)) return 'blue'; return 'gray'; };
 const DOC_TIPOS: Record<string,string> = {'01':'Factura','03':'Boleta','07':'N.Crédito','08':'N.Débito'};
@@ -330,7 +332,7 @@ function Sidebar({active,onNav,user}:{active:string;onNav:(id:string)=>void;user
 
 function Topbar({empIdx,setEmpIdx,empresas,period,setPeriod,onLogout,onRefresh,alerts,empresa,tipoCambio,darkMode,setDarkMode}:{empIdx:number;setEmpIdx:(n:number)=>void;empresas:Company[];period:string;setPeriod:(p:string)=>void;onLogout:()=>void;onRefresh:()=>void;alerts:Alert[];empresa:Company|null;tipoCambio:{compra:number;venta:number;fuente:string}|null;darkMode:boolean;setDarkMode:(fn:(d:boolean)=>boolean)=>void}) {
   const errorAlerts=alerts.filter(a=>a.level==='error');
-  const PERIODS=(()=>{const ps:string[]=[];const now=new Date();let y=now.getFullYear(),m=now.getMonth()+1;while(!(y===2023&&m===12)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m--;if(m===0){m=12;y--;}}return ps;})();
+  const PERIODS=PERIOD_OPTIONS;
   return <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:'.55rem 1.5rem',display:'flex',alignItems:'center',gap:10,fontFamily:'Inter,system-ui,sans-serif',flexShrink:0}}>
     <div style={{display:'flex',gap:8,flex:1,flexWrap:'wrap',alignItems:'center'}}>
       <select value={empIdx} onChange={e=>setEmpIdx(Number(e.target.value))} style={{padding:'.35rem .65rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:12,fontFamily:'Inter,system-ui,sans-serif',color:C.t1,background:C.card,fontWeight:600}}>
@@ -677,7 +679,7 @@ function SunatCentroView({empresa,addToast,onNav}:{empresa:Company|null;addToast
           <div>
             <label style={{display:'block',fontSize:10,fontWeight:700,color:C.t3,textTransform:'uppercase',marginBottom:4}}>Período</label>
             <select value={sireForm.period} onChange={e=>setSireForm(p=>({...p,period:e.target.value}))} style={{...inpS}}>
-              {(()=>{const ps:string[]=[];const now=new Date();let y=now.getFullYear(),m=now.getMonth()+1;while(!(y===2023&&m===12)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m--;if(m===0){m=12;y--;}}return ps;})().map(p=><option key={p}>{p}</option>)}
+              {PERIOD_OPTIONS.map(p=><option key={p}>{p}</option>)}
             </select>
           </div>
           <div>
@@ -903,7 +905,7 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
           {[['Desde','periodFrom'],['Hasta','periodTo']].map(([l,k])=>(
             <div key={k} style={{marginBottom:8}}><label style={{display:'block',fontSize:10,color:C.t4,marginBottom:3}}>{l}</label>
               <select value={cfg[k as 'periodFrom'|'periodTo']} onChange={e=>setCfg(p=>({...p,[k]:e.target.value}))} style={{width:'100%',padding:'.35rem .6rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:12,fontFamily:'Inter,system-ui,sans-serif'}}>
-                {(()=>{const ps:string[]=[];const now=new Date();let y=now.getFullYear(),m=now.getMonth()+1;while(!(y===2024&&m===0)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m--;if(m===0){m=12;y--;}}return ps;})().map(p=><option key={p}>{p}</option>)}
+                {PERIOD_OPTIONS.map(p=><option key={p}>{p}</option>)}
               </select>
             </div>
           ))}
@@ -1421,7 +1423,7 @@ function ReportesView({empresa}:{empresa:Company|null}) {
       <div><div style={{fontSize:22,fontWeight:800,color:C.t1}}>Reportes</div>
         <div style={{fontSize:13,color:C.t3}}>Datos reales de la BD · {empresa?.nombre}</div></div>
       <select value={period} onChange={e=>setPeriod(e.target.value)} style={{padding:'.4rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:12,fontFamily:'Inter,system-ui,sans-serif'}}>
-        {(()=>{const ps:string[]=[];const now=new Date();let y=now.getFullYear(),m=now.getMonth()+1;while(!(y===2023&&m===12)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m--;if(m===0){m=12;y--;}}return ps;})().map(p=><option key={p}>{p}</option>)}
+        {PERIOD_OPTIONS.map(p=><option key={p}>{p}</option>)}
       </select>
     </div>
 
