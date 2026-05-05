@@ -1,0 +1,1 @@
+﻿{"sub":"20610169849","aud":"[{\"api\":\"https:\/\/api-cpe.sunat.gob.pe\",\"recurso\":[{\"id\":\"\/v1\/contribuyente\/controlcpe\",\"indicador\":\"1\",\"gt\":\"001000\"}]},{\"api\":\"https:\/\/api-sire.sunat.gob.pe\",\"recurso\":[{\"id\":\"\/v1\/contribuyente\/migeigv\",\"indicador\":\"1\",\"gt\":\"001

@@ -8,6 +8,60 @@ import { decrypt } from '@/lib/crypto';
 
 function getPeriods(from:string,to:string):string[]{const ps:string[]=[];let[y,m]=from.split('-').map(Number);const[ty,tm]=to.split('-').map(Number);while(y<ty||(y===ty&&m<=tm)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m++;if(m>12){m=1;y++;}}return ps;}
 
+// ─── CPE Token (scope diferente a SIRE) ───────────────────────────
+const cpeTokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+async function getCpeToken(ruc: string, solUser: string, solPass: string, clientId: string, clientSecret: string): Promise<string> {
+  const key = `cpe-${ruc}-${clientId}`;
+  const cached = cpeTokenCache.get(key);
+  if (cached && Date.now() < cached.expiresAt - 60000) return cached.token;
+
+  const res = await fetch(`https://api-seguridad.sunat.gob.pe/v1/clientessol/${clientId}/oauth2/token/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type:    'password',
+      scope:         'https://api-cpe.sunat.gob.pe',   // ← scope CPE, no SIRE
+      client_id:     clientId,
+      client_secret: clientSecret,
+      username:      `${ruc}${solUser}`,
+      password:      solPass,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`CPE token error ${res.status}: ${body.substring(0,300)}`);
+  }
+  const j = await res.json() as { access_token: string; expires_in: number };
+  cpeTokenCache.set(key, { token: j.access_token, expiresAt: Date.now() + j.expires_in * 1000 });
+  console.log('[CPE] Token obtenido OK para RUC:', ruc, '| expires_in:', j.expires_in);
+  return j.access_token;
+}
+
+// ─── Descarga individual por CPE ──────────────────────────────────
+const CPE_BASE = 'https://api-cpe.sunat.gob.pe/v1/contribuyente/gem';
+const TIPO_MAP: Record<string,string> = { '01':'01','03':'03','07':'07','08':'08','RC':'RC' };
+
+async function downloadCpeFile(token: string, tipo: string, serie: string, numero: string, rucEmisor: string, fileType: 'xml'|'pdf'|'cdr'): Promise<{ content: Buffer; ok: boolean; error?: string }> {
+  const tipoCode = TIPO_MAP[tipo] ?? tipo;
+  const url = `${CPE_BASE}/comprobantes/${tipoCode}/${serie}/${numero}/${rucEmisor}/${fileType}`;
+  const accept = fileType === 'pdf' ? 'application/pdf' : 'application/xml';
+  console.log(`[CPE] Descargando ${fileType.toUpperCase()}: ${url}`);
+  try {
+    let res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: accept }, signal: AbortSignal.timeout(30000) });
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(`[CPE] HTTP ${res.status} para ${serie}-${numero} ${fileType}: ${body.substring(0,200)}`);
+      return { content: Buffer.alloc(0), ok: false, error: `HTTP ${res.status}: ${body.substring(0,200)}` };
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    return { content: buf, ok: true };
+  } catch(e) {
+    return { content: Buffer.alloc(0), ok: false, error: (e as Error).message };
+  }
+}
+
 export async function POST(req: NextRequest) {
   const user = await getUser(req);
   if (!user) return unauthorized();

@@ -15,8 +15,10 @@ export async function POST(req: NextRequest) {
     const valid = await bcrypt.compare(currentPassword, dbUser.password as string);
     if (!valid) return err('Contraseña actual incorrecta');
     const hash = await bcrypt.hash(newPassword, 10);
-    const db = getDb();
-    await db.execute({ sql: 'UPDATE users SET password=?,updatedAt=? WHERE id=?', args: [hash, new Date().toISOString(), user.sub] });
+    await getDb().query(
+      'UPDATE users SET password=$1,"updatedAt"=$2 WHERE id=$3',
+      [hash, new Date().toISOString(), user.sub]
+    );
     return ok({ changed: true });
   } catch (e) {
     return err((e as Error).message, 500);

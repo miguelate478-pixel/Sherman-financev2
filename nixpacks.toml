@@ -1,5 +1,11 @@
 [phases.setup]
 nixPkgs = ["nodejs_22"]
 
+[phases.build]
+cmds = ["npm ci", "npm run build"]
+
+[phases.deploy]
+cmd = "node scripts/init-postgres.js && node scripts/seed-postgres.js && npm start"
+
 [variables]
 NODE_VERSION = "22"

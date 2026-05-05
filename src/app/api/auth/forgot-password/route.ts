@@ -8,14 +8,14 @@ export async function POST(req: NextRequest) {
     const { email } = await req.json();
     if (!email) return err('Email requerido');
     const user = await findUserByEmail(email);
-    if (!user) return ok({ sent: true }); // don't reveal existence
+    if (!user) return ok({ sent: true });
     const token = randomBytes(32).toString('hex');
     const expires = new Date(Date.now() + 3_600_000).toISOString();
     const db = getDb();
-    await db.execute({
-      sql: 'UPDATE users SET resetToken=?,resetExpires=? WHERE id=?',
-      args: [token, expires, String(user.id)],
-    });
+    await db.query(
+      'UPDATE users SET "resetToken"=$1,"resetExpires"=$2 WHERE id=$3',
+      [token, expires, String(user.id)]
+    );
     try {
       const { sendPasswordResetEmail } = await import('@/lib/email');
       await sendPasswordResetEmail(String(email), token);
