@@ -821,7 +821,7 @@ function DashView({docs,movs,onNav,empresa,period,alerts}:{docs:Doc[];movs:BankM
 // ══════════════════════════════════════════════════════════
 //  DESCARGA MASIVA — Módulo principal
 // ══════════════════════════════════════════════════════════
-function DescargaMasivaView({empresa,addToast,onRefresh,period:globalPeriod}:{empresa:Company|null;addToast:(m:string,t?:ToastType)=>void;onRefresh:()=>void;period:string}) {
+function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globalPeriod}:{empresa:Company|null;addToast:(m:string,t?:ToastType)=>void;onRefresh:()=>void;onSetPeriod:(p:string)=>void;period:string}) {
   const [cfg,setCfg]=useState({op:'BOTH',periodFrom:globalPeriod,periodTo:globalPeriod,docTypes:['01','03','07','08'],fileTypes:['XML','PDF','CDR'],includeDetails:true,classifyAI:true});
   const [running,setRunning]=useState(false);
   const [progress,setProgress]=useState(0);
@@ -872,7 +872,7 @@ function DescargaMasivaView({empresa,addToast,onRefresh,period:globalPeriod}:{em
     addLog('Preparando lote para CONCAR SQL...');await sleep(300);
     const d=await API.bulkDownload({companyId:empresa.id,operation:cfg.op,periodFrom:cfg.periodFrom,periodTo:cfg.periodTo,documentTypes:cfg.docTypes,fileTypes:cfg.fileTypes,includeDetails:cfg.includeDetails,classifyWithAI:cfg.classifyAI});
     setRunning(false);setProgress(100);
-    if(d.ok){setResult(d.data);addLog('✅ Proceso completado exitosamente');addToast('Descarga masiva completada','success');onRefresh();}
+    if(d.ok){setResult(d.data);addLog('✅ Proceso completado exitosamente');addToast('Descarga masiva completada','success');onSetPeriod(cfg.periodFrom);onRefresh();}
     else{addLog(`❌ Error: ${d.error}`,false);addToast(d.error||'Error','error');}
   };
 
@@ -2092,7 +2092,7 @@ export default function Dashboard() {
     dashboard:    <DashView docs={docs} movs={movs} onNav={setActive} empresa={empresa} period={period} alerts={alerts}/>,
     bandeja:      <DocTableView docs={docs} titulo="Bandeja Contable" sub="Todos los documentos" addToast={addToast} onRefresh={refreshData}/>,
     sunat_centro: <SunatCentroView empresa={empresa} addToast={addToast} onNav={setActive}/>,
-    descarga_masiva:<DescargaMasivaView empresa={empresa} addToast={addToast} onRefresh={refreshData} period={period}/>,
+    descarga_masiva:<DescargaMasivaView empresa={empresa} addToast={addToast} onRefresh={refreshData} onSetPeriod={setPeriod} period={period}/>,
     jobs:         <JobsView empresa={empresa}/>,
     compras:      <DocTableView docs={compras} titulo="Compras — Comprobantes recibidos" sub="SUNAT/SIRE" addToast={addToast} onRefresh={refreshData}/>,
     ventas:       <DocTableView docs={ventas}  titulo="Ventas — Comprobantes emitidos"   sub="SUNAT/SIRE" addToast={addToast} onRefresh={refreshData}/>,
