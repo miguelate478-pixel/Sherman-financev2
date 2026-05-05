@@ -317,7 +317,7 @@ export class DirectSunatProvider implements ISunatProvider {
     // Código de libro según operación
     const codLibro = p.operation === 'VENTAS' ? '140100' : '080100';
 
-    // 3. Si hay ticket, hacer polling (máx 20 intentos = 40s)
+    // 3. Si hay ticket, hacer polling + descarga inmediata
     if (!zipBuffer && !numTicket.startsWith('DIRECT_')) {
       const pollUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`;
       let nomArchivo = '';
@@ -345,6 +345,28 @@ export class DirectSunatProvider implements ISunatProvider {
             nomArchivo = archivos[0]?.nomArchivoReporte ?? '';
             if (!nomArchivo) nomArchivo = `${p.ruc}_${p.operation}_${periodo}_${numTicket}.zip`;
             console.log('[SIRE] Terminado. Archivo:', nomArchivo);
+
+            // Descargar ZIP INMEDIATAMENTE después de obtener el nombre
+            const dlUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}`;
+            console.log('[SIRE] Descargando archivo inmediatamente:', dlUrl);
+            const dlRes = await fetch(dlUrl, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(60000) });
+            if (dlRes.ok) {
+              zipBuffer = Buffer.from(await dlRes.arrayBuffer());
+              console.log('[SIRE] ZIP descargado:', zipBuffer.byteLength, 'bytes');
+              break;
+            } else {
+              const dlBody = await dlRes.text();
+              console.log(`[SIRE] Descarga ${dlRes.status}:`, dlBody.substring(0, 200));
+              // Intentar con codLibro
+              const dlUrl2 = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=${codLibro}`;
+              const dlRes2 = await fetch(dlUrl2, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(60000) });
+              if (dlRes2.ok) {
+                zipBuffer = Buffer.from(await dlRes2.arrayBuffer());
+                console.log('[SIRE] ZIP descargado (con codLibro):', zipBuffer.byteLength, 'bytes');
+                break;
+              }
+              console.log(`[SIRE] Descarga2 ${dlRes2.status}`);
+            }
             break;
           }
           if (codEstado === '05' || codEstado === '07') {
@@ -352,23 +374,7 @@ export class DirectSunatProvider implements ISunatProvider {
           }
         } catch(e) { if ((e as Error).message.includes('Ticket')) throw e; }
       }
-      if (!nomArchivo) throw new Error(`Ticket ${numTicket} no terminó o sin archivo`);
-
-      // 4. Descargar ZIP — sin codLibro (el nombre del archivo ya identifica el recurso)
-      const dlUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}`;
-      console.log('[SIRE] Descargando archivo:', dlUrl);
-      const dlRes = await fetch(dlUrl, { headers: this.sireHeaders(token) });
-      if (!dlRes.ok) {
-        // Intentar con codLibro
-        const dlUrl2 = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=${codLibro}`;
-        console.log('[SIRE] Reintentando con codLibro:', dlUrl2);
-        const dlRes2 = await fetch(dlUrl2, { headers: this.sireHeaders(token) });
-        if (!dlRes2.ok) throw new Error(`Error descargando ZIP: ${dlRes2.status}`);
-        zipBuffer = Buffer.from(await dlRes2.arrayBuffer());
-      } else {
-        zipBuffer = Buffer.from(await dlRes.arrayBuffer());
-      }
-      console.log('[SIRE] ZIP descargado:', zipBuffer.byteLength, 'bytes');
+      if (!zipBuffer) throw new Error(`No se pudo descargar el archivo para ticket ${numTicket}`);
     }
 
     if (!zipBuffer || zipBuffer.byteLength === 0) {
