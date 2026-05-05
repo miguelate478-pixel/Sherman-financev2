@@ -319,16 +319,12 @@ export class DirectSunatProvider implements ISunatProvider {
 
     // 3. Si hay ticket, hacer polling
     if (!zipBuffer && !numTicket.startsWith('DIRECT_')) {
-      // Para RVIE usar el endpoint de propuesta, para RCE el de masivo
-      const pollUrl = p.operation === 'VENTAS'
-        ? `${SIRE_BASE}/rvie/propuesta/web/propuesta/consultaestadotickets`
-        : `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`;
+      const pollUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`;
       let nomArchivo = '';
       for (let i = 0; i < 60; i++) {
         await new Promise(r => setTimeout(r, 3000));
-        const params = p.operation === 'VENTAS'
-          ? `perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${numTicket}`
-          : `perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${numTicket}&codLibro=${codLibro}&codOrigenEnvio=2`;
+        // Sin codLibro ni codOrigenEnvio — esos parámetros causan 422
+        const params = `perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${numTicket}`;
         try {
           const res = await fetch(`${pollUrl}?${params}`, { headers: this.sireHeaders(token) });
           if (!res.ok) {
