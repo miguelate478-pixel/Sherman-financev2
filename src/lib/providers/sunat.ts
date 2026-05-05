@@ -403,23 +403,33 @@ export class DirectSunatProvider implements ISunatProvider {
       { headers: this.sireHeaders(token), signal: AbortSignal.timeout(10000) }
     );
     const rawText = await res.text();
-    console.log(`[SIRE] consultarTicket HTTP ${res.status} raw:`, rawText.substring(0, 500));
+    console.log(`[SIRE] consultarTicket HTTP ${res.status} raw COMPLETO:`, rawText);
+    if (!res.ok) {
+      console.error(`[SIRE] consultarTicket error ${res.status}`);
+      return { numTicket: ticket, estado: undefined as unknown as string };
+    }
     const data = JSON.parse(rawText) as {
       numTicket: string;
       estado: string;
       codProceso?: number;
       archivoReporte?: { nomArchivoReporte: string }[];
-      registros?: { codProceso: number }[];
+      registros?: { codProceso: number; archivoReporte?: { nomArchivoReporte: string }[] }[];
     };
     // Según manual SIRE v25: codProceso 3=OK, 4=con observaciones, 2=en proceso
     const codProceso = data.codProceso ?? data.registros?.[0]?.codProceso;
+    const archivoReporte = data.archivoReporte ?? data.registros?.[0]?.archivoReporte;
+    console.log(`[SIRE] consultarTicket codProceso=${codProceso} archivoReporte=${JSON.stringify(archivoReporte)}`);
     if (codProceso === 3 || codProceso === 4) {
-      // Terminado — normalizar estado a "06" para compatibilidad
-      return { ...data, estado: '06' };
+      return { ...data, archivoReporte, estado: '06' };
+    }
+    if (codProceso === 1) {
+      // Error en SIRE
+      console.error('[SIRE] codProceso=1 indica error en el proceso');
+      return { ...data, estado: '07' };
     }
     if (codProceso !== undefined && codProceso !== 2) {
-      // Error
-      return { ...data, estado: '07' };
+      console.log(`[SIRE] codProceso desconocido: ${codProceso} — tratando como en proceso`);
+      return { ...data, estado: undefined as unknown as string };
     }
     return data;
   }
