@@ -319,14 +319,23 @@ export class DirectSunatProvider implements ISunatProvider {
 
     // 3. Si hay ticket, hacer polling
     if (!zipBuffer && !numTicket.startsWith('DIRECT_')) {
-      const pollUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`;
+      // Para RVIE usar el endpoint de propuesta, para RCE el de masivo
+      const pollUrl = p.operation === 'VENTAS'
+        ? `${SIRE_BASE}/rvie/propuesta/web/propuesta/consultaestadotickets`
+        : `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`;
       let nomArchivo = '';
       for (let i = 0; i < 60; i++) {
         await new Promise(r => setTimeout(r, 3000));
-        const params = `perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${numTicket}&codLibro=${codLibro}&codOrigenEnvio=2`;
+        const params = p.operation === 'VENTAS'
+          ? `perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${numTicket}`
+          : `perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${numTicket}&codLibro=${codLibro}&codOrigenEnvio=2`;
         try {
           const res = await fetch(`${pollUrl}?${params}`, { headers: this.sireHeaders(token) });
-          if (!res.ok) { console.log('[SIRE] Poll', res.status); continue; }
+          if (!res.ok) {
+            const errBody = await res.text();
+            console.log(`[SIRE] Poll ${res.status}:`, errBody.substring(0, 300));
+            continue;
+          }
           const data = await res.json() as { registros?: Record<string,unknown>[] };
           const registros = data?.registros ?? [];
           const item = Array.isArray(registros) ? registros[0] : registros as unknown as Record<string,unknown>;
