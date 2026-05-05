@@ -2070,7 +2070,7 @@ export default function Dashboard() {
       API.cxp(empresa.id),
     ]);
     setDocs([...c,...v]);setMovs(b);setDetrs(d);setAuditLogs(a);setCxc(cx);setCxp(cp);
-  },[empresa?.id]);
+  },[empresa?.id,period]);
 
   const refreshEmpresas=useCallback(async()=>{const e=await API.companies();setEmpresas(e);},[]);
 
