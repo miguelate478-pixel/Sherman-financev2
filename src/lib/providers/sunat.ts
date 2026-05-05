@@ -232,14 +232,32 @@ export class DirectSunatProvider implements ISunatProvider {
 
     // 2. Obtener comprobantes directamente via endpoint /comprobantes (sin ZIP)
     const esVentas = p.operation === 'VENTAS';
-    const comprobantesUrl = esVentas
-      ? `${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/comprobantes`
-      : `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/comprobantes`;
+
+    // URLs confirmadas con el portal e-factura real:
+    // RVIE (ventas): /rvie/propuesta/web/propuesta/{periodo}/comprobantes ✅
+    // RCE (compras): pendiente confirmar URL exacta del portal
+    const comprobantesUrls = esVentas
+      ? [`${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/comprobantes`]
+      : [
+          `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/comprobantes`,
+          `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/comprobantesrecibidos`,
+          `${SIRE_BASE}/rvierce/resumen/web/resumencomprobantes/${periodo}/1/0/comprobantes?codLibro=080000`,
+        ];
 
     const allDocuments: SunatDocument[] = [];
     let page = 1;
     const perPage = 100;
     let totalRegistros = 0;
+
+    // Encontrar URL que funciona
+    let comprobantesUrl = comprobantesUrls[0];
+    for (const testUrl of comprobantesUrls) {
+      try {
+        const testRes = await fetch(`${testUrl}?page=1&perPage=1`, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(10000) });
+        if (testRes.ok) { comprobantesUrl = testUrl; console.log(`[SIRE] URL comprobantes OK: ${testUrl}`); break; }
+        console.log(`[SIRE] URL ${testUrl.substring(55)} → ${testRes.status}`);
+      } catch {}
+    }
 
     do {
       const url = `${comprobantesUrl}?page=${page}&perPage=${perPage}`;
