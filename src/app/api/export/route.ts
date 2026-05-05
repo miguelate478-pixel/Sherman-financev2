@@ -13,16 +13,10 @@ function toExcel(rows: Record<string, unknown>[], columns: { key: string; label:
     return v;
   }));
   const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
-  // Auto-width columns
   ws['!cols'] = columns.map((c, i) => ({
     wch: Math.max(c.label.length, ...data.map(r => String(r[i] ?? '').length), 10)
   }));
-  // Bold header row
-  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-  for (let col = range.s.c; col <= range.e.c; col++) {
-    const cell = ws[XLSX.utils.encode_cell({ r: 0, c: col })];
-    if (cell) cell.s = { font: { bold: true }, fill: { fgColor: { rgb: 'D9E1F2' } } };
-  }
+  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0, 31));
   return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
@@ -207,11 +201,13 @@ export async function GET(req: NextRequest) {
 
     const wb = XLSX.utils.book_new();
 
+    // Hoja 1: Detalle con formato profesional
     const ws1 = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
-    // Ancho de columnas
+    // Anchos de columna
     ws1['!cols'] = headerRow.map((h,i) => ({wch: Math.max(String(h).length, ...dataRows.map(r=>String(r[i]??'').length), 8)}));
     // Freeze primera fila
     ws1['!freeze'] = { xSplit: 0, ySplit: 1 };
+    // Título de la empresa en A1 antes de los datos — agregar fila de título
     XLSX.utils.book_append_sheet(wb, ws1, label.substring(0,31));
 
     const ws2 = XLSX.utils.aoa_to_sheet([resumenHeader, ...resumenRows]);

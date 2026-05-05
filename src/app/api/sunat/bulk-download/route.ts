@@ -140,7 +140,8 @@ export async function POST(req: NextRequest) {
             if(!fileTypes||fileTypes.includes('PDF')){try{const r=await sunat.downloadPdf(company.ruc as string,doc.id,storePath);if(r.success){hasPdf=true;pdfPath=`${storePath}/document.pdf`;periodPdf++;}}catch{periodErrors++;}}
             if(!fileTypes||fileTypes.includes('CDR')){try{const r=await sunat.downloadCdr(company.ruc as string,doc.id,storePath);if(r.success){hasCdr=true;cdrPath=`${storePath}/cdr.xml`;periodCdr++;}}catch{periodErrors++;}}
 
-            const base=Math.abs(doc.total)/1.18,igv=Math.abs(doc.total)-base;
+            const base = doc.biGravadaDG !== undefined ? doc.biGravadaDG : (Math.abs(doc.total)/1.18);
+            const igv  = doc.igvDG !== undefined ? doc.igvDG : (Math.abs(doc.total) - base);
             // Para VENTAS: el cliente viene en numDocCliente/razonSocialCliente (campos reales SUNAT)
             // Para COMPRAS: el proveedor viene en rucEmisor/rsEmisor
             const receiverRuc = op==='VENTAS'
@@ -151,7 +152,23 @@ export async function POST(req: NextRequest) {
               : doc.rsReceptor;
             try {
               console.log('[BULK] Guardando doc:', docId, 'companyId:', companyId, 'periodo:', period);
-              await createDocument({id:docId,companyId,bulkJobId:jobId,operation:op==='COMPRAS'?'COMPRA':'VENTA',docType:doc.tipo,serie:doc.serie,number:doc.numero,issuerRuc:doc.rucEmisor,issuerName:doc.rsEmisor,receiverRuc,receiverName,issueDate:doc.fecha,currency:doc.moneda,base:parseFloat(base.toFixed(2)),igv:parseFloat(igv.toFixed(2)),total:doc.total,sunatStatus:doc.sunatStatus,cdrStatus:doc.cdrStatus,hasXml,hasPdf,hasCdr,xmlPath,pdfPath,cdrPath,hashSha256:docHash,period,workflow:'PENDIENTE_REVISION',concarStatus:'PENDIENTE',parserStatus:'PENDIENTE',aiStatus:'PENDIENTE'});
+              await createDocument({
+                id:docId, companyId, bulkJobId:jobId,
+                operation: op==='COMPRAS'?'COMPRA':'VENTA',
+                docType: doc.tipo, serie: doc.serie, number: doc.numero,
+                issuerRuc: doc.rucEmisor, issuerName: doc.rsEmisor,
+                receiverRuc, receiverName,
+                issueDate: doc.fecha,
+                dueDate: doc.fecVencPag || null,
+                currency: doc.moneda,
+                base: parseFloat(base.toFixed(2)),
+                igv: parseFloat(igv.toFixed(2)),
+                total: doc.total,
+                sunatStatus: doc.sunatStatus, cdrStatus: doc.cdrStatus,
+                hasXml, hasPdf, hasCdr, xmlPath, pdfPath, cdrPath, hashSha256: docHash,
+                period, workflow:'PENDIENTE_REVISION', concarStatus:'PENDIENTE',
+                parserStatus:'PENDIENTE', aiStatus:'PENDIENTE',
+              });
               console.log('[BULK] Doc guardado OK:', docId);
             } catch (dbError) {
               console.error(`[BULK_DOWNLOAD] Failed to save document ${docId}:`, dbError);
