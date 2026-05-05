@@ -250,12 +250,18 @@ export class DirectSunatProvider implements ISunatProvider {
 
     // Encontrar URL que funciona
     let comprobantesUrl = comprobantesUrls[0];
+    let urlFound = false;
     for (const testUrl of comprobantesUrls) {
       try {
         const testRes = await fetch(`${testUrl}?page=1&perPage=1`, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(10000) });
-        if (testRes.ok) { comprobantesUrl = testUrl; console.log(`[SIRE] URL comprobantes OK: ${testUrl}`); break; }
+        if (testRes.ok) { comprobantesUrl = testUrl; urlFound = true; console.log(`[SIRE] URL comprobantes OK: ${testUrl}`); break; }
         console.log(`[SIRE] URL ${testUrl.substring(55)} → ${testRes.status}`);
       } catch {}
+    }
+
+    if (!urlFound) {
+      console.log(`[SIRE] No se encontró endpoint de comprobantes para ${p.operation} ${periodo}. El período puede no tener datos o requiere token de portal.`);
+      return { period: p.period, operation: p.operation, docsFound:0, docsXml:0, docsPdf:0, docsCdr:0, errors:0, documents:[] };
     }
 
     do {
