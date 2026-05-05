@@ -218,126 +218,189 @@ export class DirectSunatProvider implements ISunatProvider {
   }
 
   async bulkDownload(p: { ruc:string; period:string; operation:'COMPRAS'|'VENTAS'; documentTypes:string[]; sireToken?:string; solUser?:string; solPass?:string; clientId?:string; clientSecret?:string }): Promise<BulkResult> {
-    const token = p.sireToken ?? await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', p.clientId, p.clientSecret);
-    const tipo  = p.operation==='VENTAS' ? 'RVIE' : 'RCE';
+    const cId  = p.clientId  || '';
+    const cSec = p.clientSecret || '';
+    const periodo = p.period.replace('-', ''); // "2025-12" → "202512"
 
-    // Solicitar propuesta SIRE (con auto-refresh en 401)
-    const ticket = await this.getSirePropuesta(p.ruc, p.period, tipo, token, p.clientId, p.solUser, p.solPass, p.clientSecret);
-    console.log(`[SIRE] Ticket: ${ticket.numTicket} | Estado inicial: ${ticket.estado ?? 'undefined - iniciando polling'}`);
-
-    // Polling hasta estado 06 (terminado)
-    // Si estado es undefined (SUNAT solo devuelve numTicket), empezar polling inmediatamente
-    let estado = ticket.estado;
-    let finalTicket = ticket;
-    let attempts = 0;
-    while ((estado === undefined || (estado !== '06' && estado !== '07')) && attempts < 30) {
-      await sleep(3000);
-      finalTicket = await this.consultarTicket(ticket.numTicket, token, p.period);
-      estado = finalTicket.estado;
-      attempts++;
-      console.log(`[SIRE] Polling ${attempts}: estado=${estado} | codProceso=${(finalTicket as Record<string,unknown>).codProceso ?? 'N/A'}`);
+    // 1. Obtener token con auto-refresh
+    let token = p.sireToken || '';
+    if (!token) {
+      token = await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', cId, cSec);
     }
 
-    if (estado === '07') throw new Error('SIRE reportó error en el ticket');
-    if (estado !== '06') throw new Error(`SIRE no completó después de ${attempts} intentos. Estado: ${estado}`);
+    const SIRE_BASE = 'https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros';
+    const headers = this.sireHeaders(token);
 
-    const archivos = finalTicket.archivoReporte || [];
-    console.log(`[SIRE] Archivos disponibles: ${archivos.map(a => a.nomArchivoReporte).join(', ')}`);
+    let numTicket = '';
+    let directBuffer: Buffer | null = null;
+
+    if (p.operation === 'VENTAS') {
+      // RVIE - endpoint ventas
+      const urlVentas = `${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/exportapropuesta?codOrigenEnvio=2&codTipoArchivo=0`;
+      console.log('[SIRE] Ventas GET', urlVentas);
+      try {
+        const res = await fetch(urlVentas, { headers });
+        if (res.ok) {
+          const data = await res.json() as { numTicket?: string };
+          numTicket = data?.numTicket ?? '';
+          console.log('[SIRE] Ventas ticket:', numTicket);
+        } else if (res.status === 401) {
+          token = await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', cId, cSec);
+          const res2 = await fetch(urlVentas, { headers: this.sireHeaders(token) });
+          if (res2.ok) { const d = await res2.json() as { numTicket?: string }; numTicket = d?.numTicket ?? ''; }
+        } else {
+          const body = await res.text();
+          console.log('[SIRE] Ventas error', res.status, body.substring(0, 300));
+        }
+      } catch(e) { console.error('[SIRE] Ventas fetch error:', (e as Error).message); }
+
+    } else {
+      // RCE - endpoint compras 5.34
+      const url534 = `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`;
+      console.log('[SIRE] 5.34 GET', url534);
+      try {
+        const res = await fetch(url534, { headers });
+        if (res.ok) {
+          const data = await res.json() as { numTicket?: string };
+          numTicket = data?.numTicket ?? '';
+          console.log('[SIRE] 5.34 ticket:', numTicket, 'data:', JSON.stringify(data));
+        } else if (res.status === 401) {
+          console.warn('[SIRE] 401 - refrescando token');
+          token = await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', cId, cSec);
+          const res2 = await fetch(url534, { headers: this.sireHeaders(token) });
+          if (res2.ok) { const d = await res2.json() as { numTicket?: string }; numTicket = d?.numTicket ?? ''; }
+          else { console.log('[SIRE] 5.34 retry', res2.status, (await res2.text()).substring(0,200)); }
+        } else {
+          const body = await res.text();
+          console.log('[SIRE] 5.34 HTTP', res.status, body.substring(0, 500));
+        }
+      } catch(e) { console.error('[SIRE] 5.34 error:', (e as Error).message); }
+
+      // Fallback: portal exporta directo
+      if (!numTicket) {
+        const urlPortal = `${SIRE_BASE}/rvierce/resumen/web/resumencomprobantes/${periodo}/1/0/exporta?codLibro=080000`;
+        console.log('[SIRE] Portal exporta GET', urlPortal);
+        try {
+          const res = await fetch(urlPortal, { headers: this.sireHeaders(token) });
+          if (res.ok) {
+            const buf = Buffer.from(await res.arrayBuffer());
+            if (buf.byteLength > 0) {
+              directBuffer = buf;
+              numTicket = `DIRECT_${periodo}_${Date.now()}`;
+              console.log('[SIRE] Portal exporta OK, size:', buf.byteLength);
+            }
+          } else { console.log('[SIRE] Portal exporta', res.status); }
+        } catch(e) { console.error('[SIRE] Portal error:', (e as Error).message); }
+      }
+
+      // Fallback: 5.53 reportecar
+      if (!numTicket) {
+        const url553 = `${SIRE_BASE}/rvierce/gestionlibro/web/comprobanteslibros/${periodo}/reportecar`;
+        for (const codFase of ['1','2','3']) {
+          try {
+            const res = await fetch(`${url553}?codOrigenEnvio=2&codLibro=080000&codFase=${codFase}`, { headers: this.sireHeaders(token) });
+            if (res.ok) {
+              const d = await res.json() as { numTicket?: string };
+              numTicket = d?.numTicket ?? '';
+              if (numTicket) { console.log('[SIRE] 5.53 ticket codFase', codFase, ':', numTicket); break; }
+            }
+          } catch {}
+        }
+      }
+    }
+
+    if (!numTicket) throw new Error('No se pudo obtener ticket de SIRE. El período puede no tener comprobantes.');
+
+    // 2. Si es descarga directa (buffer ya disponible)
+    let zipBuffer: Buffer | null = directBuffer;
+
+    // 3. Si hay ticket, hacer polling
+    if (!zipBuffer && !numTicket.startsWith('DIRECT_')) {
+      const pollUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`;
+      let nomArchivo = '';
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const params = `perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${numTicket}&codLibro=080000&codOrigenEnvio=2`;
+        try {
+          const res = await fetch(`${pollUrl}?${params}`, { headers: this.sireHeaders(token) });
+          if (!res.ok) { console.log('[SIRE] Poll', res.status); continue; }
+          const data = await res.json() as { registros?: Record<string,unknown>[] };
+          const registros = data?.registros ?? [];
+          const item = Array.isArray(registros) ? registros[0] : registros as unknown as Record<string,unknown>;
+          if (!item) continue;
+          const codEstado = (item.codEstado ?? item.codEstadoProceso) as string | undefined;
+          console.log(`[SIRE] Poll ${i+1}: ticket ${numTicket} codEstado=${codEstado}`);
+          if (codEstado === '06' || codEstado === '3' || codEstado === '4') {
+            const archivos = (item.archivoReporte ?? []) as { nomArchivoReporte: string }[];
+            nomArchivo = archivos[0]?.nomArchivoReporte ?? '';
+            if (!nomArchivo) nomArchivo = `${p.ruc}_RCE_${periodo}_${numTicket}.zip`;
+            console.log('[SIRE] Terminado. Archivo:', nomArchivo);
+            break;
+          }
+          if (codEstado === '05' || codEstado === '07') {
+            throw new Error(`Ticket ${numTicket} error estado ${codEstado}`);
+          }
+        } catch(e) { if ((e as Error).message.includes('Ticket')) throw e; }
+      }
+      if (!nomArchivo) throw new Error(`Ticket ${numTicket} no terminó o sin archivo`);
+
+      // 4. Descargar ZIP
+      const dlUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${nomArchivo}&codLibro=080000`;
+      console.log('[SIRE] Descargando archivo:', dlUrl);
+      const dlRes = await fetch(dlUrl, { headers: this.sireHeaders(token) });
+      if (!dlRes.ok) throw new Error(`Error descargando ZIP: ${dlRes.status}`);
+      zipBuffer = Buffer.from(await dlRes.arrayBuffer());
+      console.log('[SIRE] ZIP descargado:', zipBuffer.byteLength, 'bytes');
+    }
+
+    if (!zipBuffer || zipBuffer.byteLength === 0) {
+      return { period: p.period, operation: p.operation, docsFound:0, docsXml:0, docsPdf:0, docsCdr:0, errors:0, documents:[] };
+    }
+
+    // 5. Extraer XMLs del ZIP
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(zipBuffer);
+    const entries = zip.getEntries();
+    console.log('[SIRE] Archivos en ZIP:', entries.map((e: { entryName: string }) => e.entryName).join(', '));
 
     const allDocuments: SunatDocument[] = [];
     let totalXml = 0, totalPdf = 0, totalCdr = 0, totalErrors = 0;
 
-    for (const archivo of archivos) {
-      try {
-        // URL de descarga del archivo ZIP generado por SIRE
-        const zipUrl = `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/descargaarchivo?nomArchivoReporte=${encodeURIComponent(archivo.nomArchivoReporte)}`;
-        console.log(`[SIRE] Descargando ZIP (${tipo}): ${zipUrl}`);
-        const zipRes = await this.fetchWithRetry(zipUrl, {
-          headers: this.sireHeaders(token),
-          signal: AbortSignal.timeout(60000),
-        }, 3);
-
-        if (!zipRes.ok) {
-          console.log(`[SIRE] Error descargando ${archivo.nomArchivoReporte}: HTTP ${zipRes.status}`);
-          continue;
+    for (const entry of entries) {
+      const name = (entry.entryName as string).toLowerCase();
+      if (name.endsWith('.pdf')) { totalPdf++; continue; }
+      if (name.endsWith('.xml') && (name.startsWith('r-') || name.includes('cdr'))) { totalCdr++; continue; }
+      if (name.endsWith('.xml')) {
+        totalXml++;
+        try {
+          const xmlContent = entry.getData().toString('utf8');
+          const { parseXmlUbl } = require('../xml-parser');
+          const parsed = await parseXmlUbl(xmlContent);
+          allDocuments.push({
+            id:          `${parsed.header.serie}-${parsed.header.numero}`,
+            ruc:         p.ruc,
+            serie:       parsed.header.serie,
+            numero:      parsed.header.numero,
+            tipo:        parsed.header.tipoDoc,
+            fecha:       parsed.header.fechaEmision,
+            total:       parsed.header.totalImporte,
+            moneda:      parsed.header.moneda,
+            rsEmisor:    parsed.header.rsEmisor,
+            rucEmisor:   parsed.header.rucEmisor,
+            rsReceptor:  parsed.header.rsReceptor,
+            rucReceptor: parsed.header.rucReceptor,
+            sunatStatus: 'ACEPTADO',
+            cdrStatus:   'OK',
+          });
+          console.log('[SIRE] XML OK:', parsed.header.serie, parsed.header.numero);
+        } catch(e) {
+          totalErrors++;
+          console.error('[SIRE] XML error:', entry.entryName, (e as Error).message);
         }
-
-        const zipBuffer = Buffer.from(await zipRes.arrayBuffer());
-        console.log(`[SIRE] ZIP descargado: ${zipBuffer.length} bytes`);
-
-        // Detectar si es ZIP por firma PK
-        const isZip = zipBuffer[0] === 0x50 && zipBuffer[1] === 0x4B;
-        if (!isZip) {
-          throw new Error('SIRE no devolvió un ZIP válido. Tamaño: ' + zipBuffer.byteLength + ' bytes');
-        }
-
-        const AdmZip = require('adm-zip');
-        const zip = new AdmZip(zipBuffer);
-        const entries = zip.getEntries();
-        console.log('[SIRE] Archivos en ZIP:', entries.map((e: { entryName: string }) => e.entryName).join(', '));
-
-        const documents: SunatDocument[] = [];
-        let docsXml = 0, docsPdf = 0, docsCdr = 0, errors = 0;
-
-        for (const entry of entries) {
-          const name = (entry.entryName as string).toLowerCase();
-
-          if (name.endsWith('.pdf')) {
-            docsPdf++;
-            continue;
-          }
-
-          if (name.endsWith('.xml')) {
-            // CDR: nombre empieza con R- o contiene cdr/CDR
-            if (name.startsWith('r-') || name.includes('cdr')) {
-              docsCdr++;
-              continue;
-            }
-
-            // XML de comprobante UBL 2.1
-            docsXml++;
-            try {
-              const xmlContent = entry.getData().toString('utf8');
-              const { parseXmlUbl } = require('../xml-parser');
-              const parsed = await parseXmlUbl(xmlContent);
-              documents.push({
-                id:          `${parsed.header.serie}-${parsed.header.numero}`,
-                ruc:         p.ruc,
-                serie:       parsed.header.serie,
-                numero:      parsed.header.numero,
-                tipo:        parsed.header.tipoDoc,
-                fecha:       parsed.header.fechaEmision,
-                total:       parsed.header.totalImporte,
-                moneda:      parsed.header.moneda,
-                rsEmisor:    parsed.header.rsEmisor,
-                rucEmisor:   parsed.header.rucEmisor,
-                rsReceptor:  parsed.header.rsReceptor,
-                rucReceptor: parsed.header.rucReceptor,
-                sunatStatus: 'ACEPTADO',
-                cdrStatus:   'OK',
-              });
-              console.log(`[SIRE] XML parseado: ${parsed.header.serie}-${parsed.header.numero} | Total: ${parsed.header.totalImporte}`);
-            } catch (e) {
-              errors++;
-              console.error('[SIRE] Error parseando XML:', entry.entryName, (e as Error).message);
-            }
-          }
-        }
-
-        console.log(`[SIRE] Total: ${documents.length} docs | ${docsXml} XML | ${docsPdf} PDF | ${docsCdr} CDR | ${errors} errores`);
-        allDocuments.push(...documents);
-        totalXml += docsXml;
-        totalPdf += docsPdf;
-        totalCdr += docsCdr;
-        totalErrors += errors;
-
-      } catch(e) {
-        console.error(`[SIRE] Error procesando archivo ${archivo.nomArchivoReporte}:`, e);
-        console.log(`[SIRE] Error details: ${(e as Error).message}`);
-        totalErrors++;
       }
     }
 
+    console.log(`[SIRE] Resultado: ${allDocuments.length} docs | ${totalXml} XML | ${totalPdf} PDF | ${totalCdr} CDR | ${totalErrors} errores`);
     return {
       period:    p.period,
       operation: p.operation,
