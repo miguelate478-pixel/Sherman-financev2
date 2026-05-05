@@ -249,10 +249,15 @@ export class DirectSunatProvider implements ISunatProvider {
 
     for (const archivo of archivos) {
       try {
-        const zipUrl = `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/descargaarchivo?nomArchivoReporte=${encodeURIComponent(archivo.nomArchivoReporte)}`;
+        // Determinar URL de descarga según tipo de operación
+        const esRVIE = tipo === 'RVIE';
+        const zipUrl = esRVIE
+          ? `${this.sireBase}/contribuyente/migeigv/libros/rvie/propuesta/web/propuesta/descargaarchivo?nomArchivoReporte=${encodeURIComponent(archivo.nomArchivoReporte)}`
+          : `${this.sireBase}/contribuyente/migeigv/libros/rce/propuesta/web/propuesta/descargaarchivo?nomArchivoReporte=${encodeURIComponent(archivo.nomArchivoReporte)}`;
+        console.log(`[SIRE] Descargando ZIP (${tipo}): ${zipUrl}`);
         const zipRes = await this.fetchWithRetry(zipUrl, {
           headers: this.sireHeaders(token),
-          signal: AbortSignal.timeout(60000), // Increase to 60 seconds
+          signal: AbortSignal.timeout(60000),
         }, 3);
 
         if (!zipRes.ok) {
