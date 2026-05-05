@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { getDocuments, updateDocument, createAuditLog } from '@/lib/db';
+import { getDocuments, updateDocument, createAuditLog, getDb } from '@/lib/db';
 import { getUser } from '@/lib/auth';
 import { ok, err, unauthorized, getIP } from '@/lib/response';
 
@@ -52,4 +52,18 @@ export async function PATCH(req: NextRequest) {
     await createAuditLog({ userId:user.sub, userEmail:user.email, userRole:user.role, action:'DOC_UPDATED', object:id, ip:getIP(req) });
     return ok({ updated:true });
   } catch { return err('Error', 500); }
+}
+
+export async function DELETE(req: NextRequest) {
+  const user = await getUser(req);
+  if (!user) return unauthorized();
+  try {
+    const { ids } = await req.json() as { ids: string[] };
+    if (!ids?.length) return err('ids requeridos');
+    const db = getDb();
+    for (const id of ids) {
+      await db.query('DELETE FROM documents WHERE id=$1', [id]);
+    }
+    return ok({ deleted: ids.length });
+  } catch(e) { return err((e as Error).message, 500); }
 }
