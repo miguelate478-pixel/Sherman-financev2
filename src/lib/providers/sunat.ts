@@ -263,7 +263,8 @@ export class DirectSunatProvider implements ISunatProvider {
     let urlFound = false;
     for (const testUrl of comprobantesUrls) {
       try {
-        const testRes = await fetch(`${testUrl}?page=1&perPage=1`, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(10000) });
+        const sep = testUrl.includes('?') ? '&' : '?';
+        const testRes = await fetch(`${testUrl}${sep}page=1&perPage=1`, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(10000) });
         if (testRes.ok) { comprobantesUrl = testUrl; urlFound = true; console.log(`[SIRE] URL comprobantes OK: ${testUrl}`); break; }
         console.log(`[SIRE] URL ${testUrl.substring(55)} → ${testRes.status}`);
       } catch {}
