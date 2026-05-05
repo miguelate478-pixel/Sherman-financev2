@@ -68,7 +68,7 @@ const API = {
   padron: async (ruc:string) => { const r=await fetch(`/api/sunat/padron?ruc=${ruc}`,{headers:H()}); return r.json(); },
   // CSV Export
   exportCSV: (type:string,companyId?:string,period?:string) => {
-    const p=new URLSearchParams({type,format:'csv'});
+    const p=new URLSearchParams({type});
     if(companyId) p.set('companyId',companyId);
     if(period) p.set('period',period);
     window.open(`/api/export?${p}&token=${gT()}`, '_blank');
@@ -352,7 +352,7 @@ function Topbar({empIdx,setEmpIdx,empresas,period,setPeriod,onLogout,onRefresh,a
           <span style={{width:7,height:7,borderRadius:'50%',background:c as string}}/><span style={{color:c as string,fontWeight:600}}>{l}</span>
         </div>
       ))}
-      {empresa&&<Btn color="ghost" size="sm" onClick={()=>API.exportCSV('documents',empresa.id,period)}>↓ CSV</Btn>}
+      {empresa&&<Btn color="ghost" size="sm" onClick={()=>API.exportCSV('documents',empresa.id,period)}>↓ Excel</Btn>}
       {tipoCambio&&<div style={{fontSize:11,color:C.t3,display:'flex',gap:4,alignItems:'center',border:`1px solid ${C.border}`,borderRadius:6,padding:'2px 8px'}}>
         <span style={{color:C.t4}}>USD</span>
         <span style={{fontWeight:700,color:C.t2,fontFamily:'JetBrains Mono,monospace'}}>{tipoCambio.venta.toFixed(3)}</span>
@@ -999,7 +999,16 @@ function DocTableView({docs,titulo,sub,addToast,onRefresh}:{docs:Doc[];titulo:st
     <div style={{marginBottom:'1.25rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
       <div><div style={{fontSize:22,fontWeight:800,color:C.t1}}>{titulo}</div><div style={{fontSize:13,color:C.t3}}>{sub} · {filtrados.length}/{docs.length} documentos</div></div>
       <div style={{display:'flex',gap:8}}>
-        <Btn color="ghost" size="sm" onClick={()=>{const csv='ID,Operación,Tipo,Serie,Número,Fecha,Razón Social Emisor,RUC Emisor,Moneda,Total,SUNAT,CONCAR\n'+filtrados.map(d=>[d.id,d.op,d.tipo,d.serie,d.num,d.fecha,d.rs_e,d.ruc_e,d.moneda,d.total,d.sunat,d.concar].join(',')).join('\n');const b=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='documentos.csv';a.click();}}>↓ CSV</Btn>
+        <Btn color="ghost" size="sm" onClick={()=>{
+          const XLSX2 = require('xlsx');
+          const cols = ['ID','Operación','Tipo','Serie','Número','Fecha','RUC Emisor','Razón Social Emisor','RUC Receptor','Razón Social Receptor','Moneda','Base','IGV','Total','SUNAT','CDR','Flujo','CONCAR','Período'];
+          const rows = filtrados.map(d=>[d.id,d.op,d.tipo,d.serie,d.num,d.fecha,d.ruc_e,d.rs_e,d.ruc_r,d.rs_r,d.moneda,d.base,d.igv,d.total,d.sunat,d.cdr,d.workflow,d.concar,d.period]);
+          const ws = XLSX2.utils.aoa_to_sheet([cols,...rows]);
+          ws['!cols']=cols.map((_,i)=>({wch:Math.max(cols[i].length,...rows.map(r=>String(r[i]??'').length),10)}));
+          const wb = XLSX2.utils.book_new();
+          XLSX2.utils.book_append_sheet(wb,ws,'Documentos');
+          XLSX2.writeFile(wb,`${titulo.replace(/[^a-zA-Z0-9]/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`);
+        }}>↓ Excel</Btn>
       </div>
     </div>
     <div style={{display:'flex',gap:8,marginBottom:'1rem',flexWrap:'wrap'}}>

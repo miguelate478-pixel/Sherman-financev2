@@ -2,30 +2,38 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDocuments, getBankMovements, getDetracciones, getCxc, getCxp, getAuditLogs } from '@/lib/db';
 import { getUser } from '@/lib/auth';
 import { unauthorized } from '@/lib/response';
+import * as XLSX from 'xlsx';
 
-function escapeCSV(v: unknown): string {
-  if (v === null || v === undefined) return '';
-  const s = String(v);
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
-function toCSV(rows: Record<string, unknown>[], columns: { key: string; label: string }[]): string {
-  const header = columns.map(c => escapeCSV(c.label)).join(',');
-  const body   = rows.map(r => columns.map(c => escapeCSV(r[c.key])).join(',')).join('\n');
-  return `\uFEFF${header}\n${body}`; // BOM for Excel UTF-8
+function toExcel(rows: Record<string, unknown>[], columns: { key: string; label: string }[], sheetName = 'Datos'): Buffer {
+  const header = columns.map(c => c.label);
+  const data = rows.map(r => columns.map(c => {
+    const v = r[c.key];
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'boolean') return v ? 'Sí' : 'No';
+    return v;
+  }));
+  const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
+  // Auto-width columns
+  ws['!cols'] = columns.map((c, i) => ({
+    wch: Math.max(c.label.length, ...data.map(r => String(r[i] ?? '').length), 10)
+  }));
+  // Bold header row
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+  for (let col = range.s.c; col <= range.e.c; col++) {
+    const cell = ws[XLSX.utils.encode_cell({ r: 0, c: col })];
+    if (cell) cell.s = { font: { bold: true }, fill: { fgColor: { rgb: 'D9E1F2' } } };
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0, 31));
+  return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
 }
 
 export async function GET(req: NextRequest) {
-  // Support token as query param for direct browser downloads
   const url = new URL(req.url);
   const qToken = url.searchParams.get('token');
   let user = await getUser(req);
   if (!user && qToken) {
-    // Try token from query param (for direct browser downloads)
-    const fakeReq = new NextRequest(req.url, {
-      headers: { Authorization: `Bearer ${qToken}` },
-    });
+    const fakeReq = new NextRequest(req.url, { headers: { Authorization: `Bearer ${qToken}` } });
     user = await getUser(fakeReq);
   }
   if (!user) return unauthorized();
@@ -33,9 +41,8 @@ export async function GET(req: NextRequest) {
   const type      = url.searchParams.get('type') || 'documents';
   const companyId = url.searchParams.get('companyId') || undefined;
   const period    = url.searchParams.get('period') || undefined;
-  const format    = url.searchParams.get('format') || 'csv';
 
-  let csv = '';
+  let buffer: Buffer = Buffer.alloc(0);
   let filename = `${type}_${new Date().toISOString().slice(0,10)}`;
 
   if (type === 'documents') {
@@ -67,8 +74,34 @@ export async function GET(req: NextRequest) {
       { key:'aiStatus',    label:'Estado IA' },
       { key:'period',      label:'Período' },
     ];
-    csv = toCSV(docs as Record<string,unknown>[], cols);
+    buffer = toExcel(docs as Record<string,unknown>[], cols, `Comprobantes ${period||'todos'}`);
     filename = `comprobantes_${period||'todos'}_${new Date().toISOString().slice(0,10)}`;
+  }
+
+  else if (type === 'COMPRA' || type === 'VENTA') {
+    const filters: Record<string,string> = { operation: type };
+    if (companyId) filters.companyId = companyId;
+    if (period)    filters.period    = period;
+    const docs = await getDocuments(filters);
+    const cols = [
+      { key:'serie',       label:'Serie' },
+      { key:'number',      label:'Número' },
+      { key:'docType',     label:'Tipo' },
+      { key:'issueDate',   label:'Fecha Emisión' },
+      { key:'issuerRuc',   label:'RUC Emisor' },
+      { key:'issuerName',  label:'Razón Social Emisor' },
+      { key:'receiverRuc', label:'RUC Receptor' },
+      { key:'receiverName',label:'Razón Social Receptor' },
+      { key:'currency',    label:'Moneda' },
+      { key:'base',        label:'Base Imponible' },
+      { key:'igv',         label:'IGV' },
+      { key:'total',       label:'Total' },
+      { key:'sunatStatus', label:'Estado SUNAT' },
+      { key:'period',      label:'Período' },
+    ];
+    const label = type === 'COMPRA' ? 'Compras' : 'Ventas';
+    buffer = toExcel(docs as Record<string,unknown>[], cols, `${label} ${period||'todos'}`);
+    filename = `${label.toLowerCase()}_${period||'todos'}_${new Date().toISOString().slice(0,10)}`;
   }
 
   else if (type === 'document_lines') {
@@ -80,11 +113,8 @@ export async function GET(req: NextRequest) {
     for (const doc of docs as Record<string,unknown>[]) {
       const lines = (doc.lines as Record<string,unknown>[]) || [];
       lines.forEach(l => allLines.push({
-        documentId: doc.id,
-        issuerName: doc.issuerName,
-        issueDate:  doc.issueDate,
-        currency:   doc.currency,
-        ...l,
+        documentId: doc.id, issuerName: doc.issuerName,
+        issueDate: doc.issueDate, currency: doc.currency, ...l,
       }));
     }
     const cols = [
@@ -104,7 +134,7 @@ export async function GET(req: NextRequest) {
       { key:'category',    label:'Categoría' },
       { key:'iaConfidence',label:'Confianza IA (%)' },
     ];
-    csv = toCSV(allLines, cols);
+    buffer = toExcel(allLines, cols, 'Líneas Clasificadas');
     filename = `lineas_clasificadas_${period||'todos'}_${new Date().toISOString().slice(0,10)}`;
   }
 
@@ -120,7 +150,7 @@ export async function GET(req: NextRequest) {
       { key:'matchDocId',  label:'Doc. Cruzado' },
       { key:'matchName',   label:'Razón Social Cruzada' },
     ];
-    csv = toCSV(movs as Record<string,unknown>[], cols);
+    buffer = toExcel(movs as Record<string,unknown>[], cols, 'Movimientos Bancarios');
     filename = `bancos_${new Date().toISOString().slice(0,10)}`;
   }
 
@@ -137,7 +167,7 @@ export async function GET(req: NextRequest) {
       { key:'status',      label:'Estado' },
       { key:'depositDate', label:'Fecha Depósito' },
     ];
-    csv = toCSV(detrs as Record<string,unknown>[], cols);
+    buffer = toExcel(detrs as Record<string,unknown>[], cols, 'Detracciones');
     filename = `detracciones_${new Date().toISOString().slice(0,10)}`;
   }
 
@@ -152,7 +182,7 @@ export async function GET(req: NextRequest) {
       { key:'paidDate',   label:'Fecha Cobro' },
       { key:'paidAmount', label:'Monto Cobrado' },
     ];
-    csv = toCSV(data as Record<string,unknown>[], cols);
+    buffer = toExcel(data as Record<string,unknown>[], cols, 'Cuentas por Cobrar');
     filename = `cxc_${new Date().toISOString().slice(0,10)}`;
   }
 
@@ -167,7 +197,7 @@ export async function GET(req: NextRequest) {
       { key:'paidDate',     label:'Fecha Pago' },
       { key:'paidAmount',   label:'Monto Pagado' },
     ];
-    csv = toCSV(data as Record<string,unknown>[], cols);
+    buffer = toExcel(data as Record<string,unknown>[], cols, 'Cuentas por Pagar');
     filename = `cxp_${new Date().toISOString().slice(0,10)}`;
   }
 
@@ -181,15 +211,15 @@ export async function GET(req: NextRequest) {
       { key:'object',    label:'Objeto' },
       { key:'ip',        label:'IP' },
     ];
-    csv = toCSV(logs as Record<string,unknown>[], cols);
+    buffer = toExcel(logs as Record<string,unknown>[], cols, 'Auditoría');
     filename = `auditoria_${new Date().toISOString().slice(0,10)}`;
   }
 
-  return new NextResponse(csv, {
+  return new NextResponse(buffer as unknown as BodyInit, {
     status: 200,
     headers: {
-      'Content-Type':        'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${filename}.csv"`,
+      'Content-Type':        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${filename}.xlsx"`,
     },
   });
 }
