@@ -383,7 +383,9 @@ export class DirectSunatProvider implements ISunatProvider {
       console.log(`[SIRE] Error final ${res.status} body:`, body.substring(0, 2000));
       throw new Error(`SIRE propuesta error ${res.status}: ${body}`);
     }
-    return res.json() as Promise<{ numTicket:string; estado:string; archivoReporte?:{ nomArchivoReporte:string }[] }>;
+    const jsonResponse = await res.json();
+    console.log('[SIRE] Propuesta JSON response:', JSON.stringify(jsonResponse, null, 2));
+    return jsonResponse as Promise<{ numTicket:string; estado:string; archivoReporte?:{ nomArchivoReporte:string }[] }>;
   }
 
   async consultarTicket(ticket: string, token: string) {
