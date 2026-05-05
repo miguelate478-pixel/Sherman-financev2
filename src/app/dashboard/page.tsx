@@ -330,7 +330,7 @@ function Sidebar({active,onNav,user}:{active:string;onNav:(id:string)=>void;user
 
 function Topbar({empIdx,setEmpIdx,empresas,period,setPeriod,onLogout,onRefresh,alerts,empresa,tipoCambio,darkMode,setDarkMode}:{empIdx:number;setEmpIdx:(n:number)=>void;empresas:Company[];period:string;setPeriod:(p:string)=>void;onLogout:()=>void;onRefresh:()=>void;alerts:Alert[];empresa:Company|null;tipoCambio:{compra:number;venta:number;fuente:string}|null;darkMode:boolean;setDarkMode:(fn:(d:boolean)=>boolean)=>void}) {
   const errorAlerts=alerts.filter(a=>a.level==='error');
-  const PERIODS=['2026-04','2026-03','2026-02','2026-01','2025-12','2025-11','2025-10','2025-09'];
+  const PERIODS=(()=>{const ps:string[]=[];const now=new Date();let y=now.getFullYear(),m=now.getMonth()+1;while(!(y===2023&&m===12)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m--;if(m===0){m=12;y--;}}return ps;})();
   return <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:'.55rem 1.5rem',display:'flex',alignItems:'center',gap:10,fontFamily:'Inter,system-ui,sans-serif',flexShrink:0}}>
     <div style={{display:'flex',gap:8,flex:1,flexWrap:'wrap',alignItems:'center'}}>
       <select value={empIdx} onChange={e=>setEmpIdx(Number(e.target.value))} style={{padding:'.35rem .65rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:12,fontFamily:'Inter,system-ui,sans-serif',color:C.t1,background:C.card,fontWeight:600}}>
@@ -677,7 +677,7 @@ function SunatCentroView({empresa,addToast,onNav}:{empresa:Company|null;addToast
           <div>
             <label style={{display:'block',fontSize:10,fontWeight:700,color:C.t3,textTransform:'uppercase',marginBottom:4}}>Período</label>
             <select value={sireForm.period} onChange={e=>setSireForm(p=>({...p,period:e.target.value}))} style={{...inpS}}>
-              {['2026-04','2026-03','2026-02','2026-01','2025-12','2025-11'].map(p=><option key={p}>{p}</option>)}
+              {(()=>{const ps:string[]=[];const now=new Date();let y=now.getFullYear(),m=now.getMonth()+1;while(!(y===2023&&m===12)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m--;if(m===0){m=12;y--;}}return ps;})().map(p=><option key={p}>{p}</option>)}
             </select>
           </div>
           <div>
@@ -822,7 +822,7 @@ function DashView({docs,movs,onNav,empresa,period,alerts}:{docs:Doc[];movs:BankM
 //  DESCARGA MASIVA — Módulo principal
 // ══════════════════════════════════════════════════════════
 function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globalPeriod}:{empresa:Company|null;addToast:(m:string,t?:ToastType)=>void;onRefresh:()=>void;onSetPeriod:(p:string)=>void;period:string}) {
-  const [cfg,setCfg]=useState({op:'BOTH',periodFrom:globalPeriod,periodTo:globalPeriod,docTypes:['01','03','07','08'],fileTypes:['XML','PDF','CDR'],includeDetails:true,classifyAI:true});
+  const [cfg,setCfg]=useState({op:'PURCHASES',periodFrom:globalPeriod,periodTo:globalPeriod,docTypes:['01','03','07','08'],fileTypes:['XML','PDF','CDR'],includeDetails:true,classifyAI:true});
   const [running,setRunning]=useState(false);
   const [progress,setProgress]=useState(0);
   const [logs,setLogs]=useState<{m:string;ts:string;ok:boolean}[]>([]);
@@ -903,7 +903,7 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
           {[['Desde','periodFrom'],['Hasta','periodTo']].map(([l,k])=>(
             <div key={k} style={{marginBottom:8}}><label style={{display:'block',fontSize:10,color:C.t4,marginBottom:3}}>{l}</label>
               <select value={cfg[k as 'periodFrom'|'periodTo']} onChange={e=>setCfg(p=>({...p,[k]:e.target.value}))} style={{width:'100%',padding:'.35rem .6rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:12,fontFamily:'Inter,system-ui,sans-serif'}}>
-                {['2026-04','2026-03','2026-02','2026-01','2025-12','2025-11'].map(p=><option key={p}>{p}</option>)}
+                {(()=>{const ps:string[]=[];const now=new Date();let y=now.getFullYear(),m=now.getMonth()+1;while(!(y===2024&&m===0)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m--;if(m===0){m=12;y--;}}return ps;})().map(p=><option key={p}>{p}</option>)}
               </select>
             </div>
           ))}
@@ -1421,7 +1421,7 @@ function ReportesView({empresa}:{empresa:Company|null}) {
       <div><div style={{fontSize:22,fontWeight:800,color:C.t1}}>Reportes</div>
         <div style={{fontSize:13,color:C.t3}}>Datos reales de la BD · {empresa?.nombre}</div></div>
       <select value={period} onChange={e=>setPeriod(e.target.value)} style={{padding:'.4rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:12,fontFamily:'Inter,system-ui,sans-serif'}}>
-        {['2026-04','2026-03','2026-02','2026-01'].map(p=><option key={p}>{p}</option>)}
+        {(()=>{const ps:string[]=[];const now=new Date();let y=now.getFullYear(),m=now.getMonth()+1;while(!(y===2023&&m===12)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m--;if(m===0){m=12;y--;}}return ps;})().map(p=><option key={p}>{p}</option>)}
       </select>
     </div>
 
