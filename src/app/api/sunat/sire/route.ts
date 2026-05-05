@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   const user = await getUser(req);
   if (!user) return unauthorized();
   const { searchParams } = new URL(req.url);
-  const ticket = searchParams.get('ticket'), companyId = searchParams.get('companyId');
+  const ticket = searchParams.get('ticket'), companyId = searchParams.get('companyId'), period = searchParams.get('period') ?? undefined;
   if (!ticket||!companyId) return err('ticket y companyId requeridos');
   try {
     const cred = await getCredentialByCompany(companyId);
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
     } else {
       sireToken = await provider.getSireToken(company.ruc as string, '', '');
     }
-    const result = await provider.consultarTicket(ticket, sireToken);
+    const result = await provider.consultarTicket(ticket, sireToken, period);
     return ok(result);
   } catch(e) { return err((e as Error).message, 500); }
 }

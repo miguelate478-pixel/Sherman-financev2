@@ -37,7 +37,7 @@ export interface ISunatProvider {
   downloadPdf(ruc: string, documentId: string, storagePath?: string): Promise<DownloadResult>;
   downloadCdr(ruc: string, documentId: string, storagePath?: string): Promise<DownloadResult>;
   getSirePropuesta(ruc: string, period: string, tipo: 'RVIE'|'RCE', sireToken: string, clientId?: string, solUser?: string, solPass?: string, clientSecret?: string): Promise<{ numTicket: string; estado: string; archivoReporte?: { nomArchivoReporte: string }[] }>;
-  consultarTicket(ticket: string, sireToken: string): Promise<{ numTicket: string; estado: string; archivoReporte?: { nomArchivoReporte: string }[] }>;
+  consultarTicket(ticket: string, sireToken: string, period?: string): Promise<{ numTicket: string; estado: string; archivoReporte?: { nomArchivoReporte: string }[] }>;
 }
 
 // Cache de tokens SIRE por clientId+ruc
@@ -107,7 +107,7 @@ export class MockSunatProvider implements ISunatProvider {
     return { cdrContent:cdr, hash:sha256(cdr), success:true };
   }
   async getSirePropuesta(_r: string, period: string, tipo: string, _t: string, _cId?: string, _su?: string, _sp?: string, _cs?: string) { return { numTicket:`TICK-${tipo}-${period}-${Date.now()}`, estado:'06', archivoReporte:[{ nomArchivoReporte:`${tipo}_${period}.zip` }] }; }
-  async consultarTicket(ticket: string, _t: string) { return { numTicket:ticket, estado:'06' }; }
+  async consultarTicket(ticket: string, _t: string, _period?: string) { return { numTicket:ticket, estado:'06' }; }
 }
 
 export class DirectSunatProvider implements ISunatProvider {
@@ -232,7 +232,7 @@ export class DirectSunatProvider implements ISunatProvider {
     let attempts = 0;
     while ((estado === undefined || (estado !== '06' && estado !== '07')) && attempts < 30) {
       await sleep(3000);
-      finalTicket = await this.consultarTicket(ticket.numTicket, token);
+      finalTicket = await this.consultarTicket(ticket.numTicket, token, p.period);
       estado = finalTicket.estado;
       attempts++;
       console.log(`[SIRE] Polling ${attempts}: estado=${estado} | codProceso=${(finalTicket as Record<string,unknown>).codProceso ?? 'N/A'}`);
@@ -389,9 +389,25 @@ export class DirectSunatProvider implements ISunatProvider {
     return jsonResponse as Promise<{ numTicket:string; estado:string; archivoReporte?:{ nomArchivoReporte:string }[] }>;
   }
 
-  async consultarTicket(ticket: string, token: string) {
+  async consultarTicket(ticket: string, token: string, period?: string) {
+    // SUNAT requires perIni/perFin in YYYYMM format (e.g. "202511").
+    // Use the provided period (stripping any "-" separator) or fall back to the current month.
+    let yyyymm: string;
+    if (period) {
+      yyyymm = period.replace('-', '');
+    } else {
+      const now = new Date();
+      yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+    const params = new URLSearchParams({
+      numTicket: ticket,
+      page:      '1',
+      perPage:   '100',
+      perIni:    yyyymm,
+      perFin:    yyyymm,
+    });
     const res = await fetch(
-      `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?numTicket=${ticket}&page=1&perPage=10&perIni=1&perFin=10`,
+      `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?${params}`,
       { headers: this.sireHeaders(token), signal: AbortSignal.timeout(10000) }
     );
     const rawText = await res.text();
