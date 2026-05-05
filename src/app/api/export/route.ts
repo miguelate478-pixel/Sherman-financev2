@@ -118,32 +118,40 @@ export async function GET(req: NextRequest) {
       const rucProv = type === 'COMPRA' ? String(d.issuerRuc  ?? '') : String(d.receiverRuc  ?? '');
       const rsProv  = type === 'COMPRA' ? String(d.issuerName ?? '') : String(d.receiverName ?? '');
 
-      // BI Gravado vs Valor Adq NG
-      const biGravado = base > 0 ? base.toFixed(2) : '0.00';
-      const igvMonto  = igv  > 0 ? igv.toFixed(2)  : '0.00';
-      const valorNG   = base === 0 && igv === 0 ? total.toFixed(2) : '0.00';
+      // BI Gravado vs Valor Adq NG — usar campos específicos si existen
+      const biGravado = Number(d.base  ?? 0);
+      const igvMonto  = Number(d.igv   ?? 0);
+      const valNG     = Number((d as Record<string,unknown>).valNG ?? (biGravado === 0 && igvMonto === 0 ? total : 0));
+      const isc       = Number((d as Record<string,unknown>).isc ?? 0);
+      const icbper    = Number((d as Record<string,unknown>).icbper ?? 0);
+      const otrosTrib = Number((d as Record<string,unknown>).otrosTrib ?? 0);
+      const tc        = Number((d as Record<string,unknown>).tipoCambio ?? 1);
+      const annCDP    = String((d as Record<string,unknown>).annCDP ?? '');
+      const fecVenc   = String((d as Record<string,unknown>).fecVencPag ?? d.dueDate ?? '').split('-').reverse().join('/').replace(/^\/+/, '');
 
       return [
         '',          // Inc.
         fecha,       // Fecha emisión
-        venc,        // Fecha Vcto/Pago
+        fecVenc,     // Fecha Vcto/Pago
         tipoDoc,     // Tipo CP/Doc
         serie,       // Serie del CDP
-        '',          // Año
+        annCDP,      // Año
         numero,      // Nro CP
         '',          // Nro Final
-        '6',         // Tipo Doc Identidad (RUC=6)
+        '6',         // Tipo Doc Identidad
         rucProv,     // Nro Doc Identidad
         rsProv,      // Razón Social
-        biGravado,   // BI Gravado DG
-        igvMonto,    // IGV/IPM DG
+        biGravado > 0 ? biGravado.toFixed(2) : '0.00',  // BI Gravado DG
+        igvMonto  > 0 ? igvMonto.toFixed(2)  : '0.00',  // IGV/IPM DG
         '0.00','0.00', // DGNG
         '0.00','0.00', // DNG
-        valorNG,     // Valor Adq. NG
-        '0.00','0.00','0.00', // ISC, ICBPER, Otros
-        total.toFixed(2), // Total CP
+        valNG > 0 ? valNG.toFixed(2) : '0.00',           // Valor Adq. NG
+        isc.toFixed(2),     // ISC
+        icbper.toFixed(2),  // ICBPER
+        otrosTrib.toFixed(2), // Otros Trib
+        total.toFixed(2),   // Total CP
         moneda,      // Moneda
-        '1.000',     // Tipo de Cambio
+        tc.toFixed(3), // Tipo de Cambio
         '',          // Tipo de Nota
         '1',         // Est. Comp.
         '',          // CAR SUNAT

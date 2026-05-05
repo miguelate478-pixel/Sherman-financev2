@@ -10,6 +10,16 @@ export interface SunatDocument {
   tipoDocCliente?: string;
   numDocCliente?: string;
   razonSocialCliente?: string;
+  // Campos adicionales para Excel completo
+  fecVencPag?: string;
+  tipoCambio?: number;
+  annCDP?: string;
+  valNG?: number;
+  isc?: number;
+  icbper?: number;
+  otrosTrib?: number;
+  biGravadaDG?: number;
+  igvDG?: number;
 }
 
 export interface SunatValidationResult {
@@ -398,9 +408,19 @@ export class DirectSunatProvider implements ISunatProvider {
             rsEmisor,
             rucEmisor,
             rsReceptor,
-            rucReceptor,
-            sunatStatus: reg.codEstadoComprobante === '1' ? 'ACEPTADO' : 'OBSERVADO',
+            rucReceptor: esVentas ? String(reg.numDocIdentidad ?? reg.numDocIdentidadProveedor ?? '') : p.ruc,
+            sunatStatus: String(reg.codEstadoComprobante === '1' ? 'ACEPTADO' : 'OBSERVADO'),
             cdrStatus:   'OK',
+            // Campos adicionales para Excel completo
+            fecVencPag:  String(reg.fecVencPag ?? '').substring(0,10),
+            tipoCambio:  Number((reg.tipoCambio as Record<string,unknown>)?.mtoTipoCambio ?? 1),
+            annCDP:      String(reg.annCDP ?? ''),
+            valNG:       Number(montos?.mtoValorAdqNG ?? 0),
+            isc:         Number(montos?.mtoISC ?? 0),
+            icbper:      Number(montos?.mtoIcbp ?? 0),
+            otrosTrib:   Number(montos?.mtoOtrosTrib ?? 0),
+            biGravadaDG: base,
+            igvDG:       igv,
           });
         }
 
