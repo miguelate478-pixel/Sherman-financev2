@@ -84,63 +84,67 @@ export async function GET(req: NextRequest) {
     if (period)    filters.period    = period;
     const docs = await getDocuments(filters);
     const label = type === 'COMPRA' ? 'Registro de Compras' : 'Registro de Ventas';
+    const tipoReg = type === 'COMPRA' ? 'RCE' : 'RVIE';
     const periodoTributario = period ? period.replace('-','') : '';
 
-    // Hoja 1: Comprobantes en formato PLE SUNAT
-    const headerRow = type === 'COMPRA'
-      ? ['Inc.','Fecha de emisión','Fecha Vcto/Pago','Tipo CP/Doc','Serie del CDP','Año','Nro CP o Doc.','Nro Final (Rango)','Tipo Doc Identidad','Nro Doc Identidad','Apellidos Nombres/ Razon Social','BI Gravado DG','IGV/IPM DG','BI Gravado DGNG','IGV/IPM DGNG','BI Gravado DNG','IGV/IPM DNG','Valor Adq. NG','ISC','ICBPER','Otros Trib/Cargos','Total CP','Moneda','Tipo de Cambio','Tipo de Nota','Est. Comp.','CAR SUNAT']
-      : ['Inc.','Fecha de emisión','Fecha Vcto/Pago','Tipo CP/Doc','Serie del CDP','Año','Nro CP o Doc.','Nro Final (Rango)','Tipo Doc Identidad','Nro Doc Identidad','Apellidos Nombres/ Razon Social','BI Gravado DG','IGV/IPM DG','BI Gravado DGNG','IGV/IPM DGNG','BI Gravado DNG','IGV/IPM DNG','Valor Adq. NG','ISC','ICBPER','Otros Trib/Cargos','Total CP','Moneda','Tipo de Cambio','Tipo de Nota','Est. Comp.'];
+    const TIPO_MAP: Record<string,string> = {
+      '01':'Factura','03':'Boleta de Venta','07':'Nota de Crédito',
+      '08':'Nota de Débito','14':'Recibo de Servicios Públicos Electrónico'
+    };
 
-    const TIPO_MAP: Record<string,string> = {'01':'Factura','03':'Boleta','07':'Nota de Crédito','08':'Nota de Débito','14':'Recibo Servicios Públicos'};
+    // Agrupar por tipo de documento
+    const grupos: Record<string, { tipo:string; label:string; count:number; base:number; igv:number; total:number }> = {};
+    for (const d of docs as Record<string,unknown>[]) {
+      const codTipo = String(d.docType ?? '01');
+      const tipoLabel = TIPO_MAP[codTipo] || `Tipo ${codTipo}`;
+      const key = `${codTipo}-${tipoLabel}`;
+      if (!grupos[key]) grupos[key] = { tipo: codTipo, label: tipoLabel, count: 0, base: 0, igv: 0, total: 0 };
+      grupos[key].count++;
+      grupos[key].base  += Number(d.base  ?? 0);
+      grupos[key].igv   += Number(d.igv   ?? 0);
+      grupos[key].total += Math.abs(Number(d.total ?? 0));
+    }
 
-    const dataRows = (docs as Record<string,unknown>[]).map(d => {
-      const base   = Number(d.base ?? 0);
-      const igv    = Number(d.igv ?? 0);
-      const total  = Number(d.total ?? 0);
-      const serie  = String(d.serie ?? '');
-      const numero = String(d.number ?? '');
-      const fecha  = String(d.issueDate ?? '').split('-').reverse().join('/'); // YYYY-MM-DD → DD/MM/YYYY
-      const rucEmisor = type === 'COMPRA' ? String(d.issuerRuc ?? '') : String(d.receiverRuc ?? '');
-      const rsEmisor  = type === 'COMPRA' ? String(d.issuerName ?? '') : String(d.receiverName ?? '');
-      const tipoDoc   = TIPO_MAP[String(d.docType ?? '01')] || String(d.docType ?? '');
-      const row: unknown[] = [
-        '',           // Inc.
-        fecha,        // Fecha emisión
-        fecha,        // Fecha Vcto
-        tipoDoc,      // Tipo CP
-        serie,        // Serie
-        '',           // Año
-        numero,       // Nro CP
-        '',           // Nro Final
-        '6',          // Tipo Doc Identidad (RUC=6)
-        rucEmisor,    // Nro Doc Identidad
-        rsEmisor,     // Razón Social
-        base > 0 ? base.toFixed(2) : '0.00',   // BI Gravado DG
-        igv > 0  ? igv.toFixed(2)  : '0.00',   // IGV DG
-        '0.00','0.00','0.00','0.00',            // DGNG, DNG
-        base === 0 ? Math.abs(total).toFixed(2) : '0.00', // Valor Adq NG
-        '0.00','0.00','0.00',                   // ISC, ICBPER, Otros
-        Math.abs(total).toFixed(2),             // Total CP
-        String(d.currency ?? 'PEN'),            // Moneda
-        '1.000',                                // Tipo Cambio
-        '',                                     // Tipo Nota
-        '1',                                    // Est. Comp.
-      ];
-      if (type === 'COMPRA') row.push(''); // CAR SUNAT
-      return row;
-    });
+    const totalDocs  = Object.values(grupos).reduce((s,g) => s + g.count, 0);
+    const totalBase  = Object.values(grupos).reduce((s,g) => s + g.base, 0);
+    const totalIgv   = Object.values(grupos).reduce((s,g) => s + g.igv, 0);
+    const totalMonto = Object.values(grupos).reduce((s,g) => s + g.total, 0);
 
-    // Calcular totales
-    const totalDocs = docs.length;
-    const totalBase = (docs as Record<string,unknown>[]).reduce((s,d) => s + Number(d.base ?? 0), 0);
-    const totalIgv  = (docs as Record<string,unknown>[]).reduce((s,d) => s + Number(d.igv ?? 0), 0);
-    const totalMonto= (docs as Record<string,unknown>[]).reduce((s,d) => s + Math.abs(Number(d.total ?? 0)), 0);
+    // Hoja 1: Resumen por tipo de documento (igual al archivo de referencia)
+    const headerRow = [
+      'Tipo de Documento','Total Documentos',
+      'BI Gravado DG','IGV / IPM DG',
+      'BI Gravado DGNG','IGV / IPM DGNG',
+      'BI Gravado DNG','IGV / IPM DNG',
+      'Valor Adq. NG','ISC','ICBPER','Otros Trib/ Cargos','Total CP'
+    ];
 
-    // Hoja 2: Resumen
+    const dataRows = Object.values(grupos).map(g => [
+      `${g.tipo}-${g.label}`,
+      g.count,
+      g.base.toFixed(2),
+      g.igv.toFixed(2),
+      '0.00','0.00','0.00','0.00',
+      '0.00','0.00','0.00','0.00',
+      g.total.toFixed(2),
+    ]);
+
+    // Fila TOTAL
+    dataRows.push([
+      'TOTAL',
+      totalDocs,
+      totalBase.toFixed(2),
+      totalIgv.toFixed(2),
+      '0.00','0.00','0.00','0.00',
+      '0.00','0.00','0.00','0.00',
+      totalMonto.toFixed(2),
+    ]);
+
+    // Hoja 2: Resumen general
     const resumenRows = [
       ['Concepto', 'Valor'],
       ['Período Tributario', periodoTributario],
-      ['Tipo de Registro', label + ' (' + (type === 'COMPRA' ? 'RCE' : 'RVIE') + ')'],
+      ['Tipo de Registro', `${label} (${tipoReg})`],
       ['Fecha de Generación', new Date().toLocaleDateString('es-PE')],
       ['Total Comprobantes', totalDocs],
       ['Base Imponible Total', `S/ ${totalBase.toFixed(2)}`],
@@ -150,14 +154,14 @@ export async function GET(req: NextRequest) {
 
     const wb = XLSX.utils.book_new();
 
-    // Hoja comprobantes
+    // Hoja resumen por tipo
     const ws1 = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
     ws1['!cols'] = headerRow.map((h, i) => ({
-      wch: Math.max(String(h).length, ...dataRows.map(r => String(r[i] ?? '').length), 8)
+      wch: Math.max(String(h).length, ...dataRows.map(r => String(r[i] ?? '').length), 10)
     }));
     XLSX.utils.book_append_sheet(wb, ws1, label.substring(0, 31));
 
-    // Hoja resumen
+    // Hoja resumen general
     const ws2 = XLSX.utils.aoa_to_sheet(resumenRows);
     ws2['!cols'] = [{ wch: 25 }, { wch: 40 }];
     XLSX.utils.book_append_sheet(wb, ws2, 'Resumen');
