@@ -317,12 +317,12 @@ export class DirectSunatProvider implements ISunatProvider {
     // Código de libro según operación
     const codLibro = p.operation === 'VENTAS' ? '140100' : '080100';
 
-    // 3. Si hay ticket, hacer polling
+    // 3. Si hay ticket, hacer polling (máx 20 intentos = 40s)
     if (!zipBuffer && !numTicket.startsWith('DIRECT_')) {
       const pollUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`;
       let nomArchivo = '';
-      for (let i = 0; i < 60; i++) {
-        await new Promise(r => setTimeout(r, 3000));
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 2000));
         // Sin codLibro ni codOrigenEnvio — esos parámetros causan 422
         const params = `perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${numTicket}`;
         try {
