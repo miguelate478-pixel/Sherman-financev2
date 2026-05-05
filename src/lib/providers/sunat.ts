@@ -321,8 +321,10 @@ export class DirectSunatProvider implements ISunatProvider {
     if (!zipBuffer && !numTicket.startsWith('DIRECT_')) {
       const pollUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`;
       let nomArchivo = '';
+      // Esperar 5s antes del primer poll para que SIRE procese el ticket
+      await new Promise(r => setTimeout(r, 5000));
       for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 2000));
+        if (i > 0) await new Promise(r => setTimeout(r, 2000));
         // Sin codLibro ni codOrigenEnvio — esos parámetros causan 422
         const params = `perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${numTicket}`;
         try {
