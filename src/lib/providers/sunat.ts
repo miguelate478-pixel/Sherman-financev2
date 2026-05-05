@@ -247,7 +247,7 @@ export class DirectSunatProvider implements ISunatProvider {
     // RVIE (ventas): /rvie/propuesta/web/propuesta/{periodo}/comprobantes ✅ (token API)
     // RCE (compras): /rce/propuesta/web/propuesta/{periodo}/busqueda?codTipoOpe=1 ✅ (token portal)
     const comprobantesUrls = esVentas
-      ? [`${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/comprobantes`]
+      ? [`${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/comprobantes?codTipoOpe=1`]
       : [
           `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/busqueda?codTipoOpe=1`,
           `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/comprobantes`,
@@ -378,9 +378,10 @@ export class DirectSunatProvider implements ISunatProvider {
 
           // Montos: RVIE usa campos directos, RCE busqueda usa objeto montos
           const montos = reg.montos as Record<string,unknown> | undefined;
-          const total  = Number(montos?.mtoTotalCp ?? reg.mtoTotalCP ?? 0);
+          const total  = Number(montos?.mtoTotalCp ?? reg.mtoTotalCP ?? reg.mtoTotalCP ?? 0);
           const base   = Number(montos?.mtoBIGravadaDG ?? reg.mtoBIGravada ?? 0);
           const igv    = Number(montos?.mtoIgvIpmDG ?? reg.mtoIGV ?? 0);
+          const valNG  = Number(montos?.mtoValorAdqNG ?? 0);
 
           // Para ventas: emisor=empresa, receptor=cliente
           // Para compras (busqueda): proveedor en nomRazonSocialProveedor/numDocIdentidadProveedor
@@ -416,10 +417,10 @@ export class DirectSunatProvider implements ISunatProvider {
             fecVencPag:  String(reg.fecVencPag ?? '').substring(0,10),
             tipoCambio:  Number((reg.tipoCambio as Record<string,unknown>)?.mtoTipoCambio ?? 1),
             annCDP:      String(reg.annCDP ?? ''),
-            valNG:       Number(montos?.mtoValorAdqNG ?? 0),
-            isc:         Number(montos?.mtoISC ?? 0),
-            icbper:      Number(montos?.mtoIcbp ?? 0),
-            otrosTrib:   Number(montos?.mtoOtrosTrib ?? 0),
+            valNG:       Number(montos?.mtoValorAdqNG ?? reg.mtoValorAdqNG ?? 0),
+            isc:         Number(montos?.mtoISC ?? reg.mtoISC ?? 0),
+            icbper:      Number(montos?.mtoIcbp ?? reg.mtoIcbp ?? 0),
+            otrosTrib:   Number(montos?.mtoOtrosTrib ?? reg.mtoOtrosTrib ?? 0),
             biGravadaDG: base,
             igvDG:       igv,
           });
