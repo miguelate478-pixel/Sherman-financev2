@@ -761,56 +761,159 @@ function SunatCentroView({empresa,addToast,onNav}:{empresa:Company|null;addToast
 }
 
 function DashView({docs,movs,onNav,empresa,period,alerts}:{docs:Doc[];movs:BankMov[];onNav:(id:string)=>void;empresa:Company|null;period:string;alerts:Alert[]}) {
-  const [kpis,setKpis]=useState<Record<string,unknown>|null>(null);
-  useEffect(()=>{if(empresa?.id)API.getDashboard(empresa.id,period).then(r=>{if(r.ok)setKpis(r.data.kpis);});},[empresa?.id,period]);
-  const tc=kpis?(kpis.totalCompras as number)||0:docs.filter(d=>d.op==='COMPRA').reduce((s,d)=>s+Math.abs(d.total),0);
-  const tv=kpis?(kpis.totalVentas as number)||0:docs.filter(d=>d.op==='VENTA').reduce((s,d)=>s+d.total,0);
-  const igvC=kpis?(kpis.igvCredito as number)||0:docs.filter(d=>d.op==='COMPRA'&&d.moneda==='PEN'&&d.sunat==='ACEPTADO').reduce((s,d)=>s+Math.abs(d.igv),0);
-  const saldo=kpis?(kpis.saldoBanco as number)||0:movs.length?movs[movs.length-1].saldo:0;
-  const [y,m]=period.split('-'); const mesNombre=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m)-1]||m;
-  const chart=[{mes:mesNombre+' -3',c:74000,v:102000},{mes:mesNombre+' -2',c:68000,v:89000},{mes:mesNombre+' -1',c:95000,v:115000},{mes:mesNombre,c:Math.round(tc),v:Math.round(tv)}];
-  const pieData=[{name:'Compras',value:Math.round(tc)},{name:'Ventas',value:Math.round(tv)}];
-  const COLORS=[C.blue,C.violet];
+  const [dashData,setDashData]=useState<Record<string,unknown>|null>(null);
+  const [loading,setLoading]=useState(false);
+
+  useEffect(()=>{
+    if(!empresa?.id) return;
+    setLoading(true);
+    API.getDashboard(empresa.id,period).then(r=>{
+      if(r.ok) setDashData(r.data);
+      setLoading(false);
+    }).catch(()=>setLoading(false));
+  },[empresa?.id,period]);
+
+  const kpis = dashData?.kpis as Record<string,number>|undefined;
+  const chartData = (dashData?.chartData as {period:string;compras:number;ventas:number}[])||([] as {period:string;compras:number;ventas:number}[]);
+  const topProveedores = (dashData?.topProveedores as {nombre:string;ruc:string;monto:number;cantidad:number}[])||([] as {nombre:string;ruc:string;monto:number;cantidad:number}[]);
+  const ultimosDocs = (dashData?.ultimosDocs as {id:string;op:string;tipo:string;serie:string;numero:string;contraparte:string;fecha:string;total:number;sunat:string}[])||([] as {id:string;op:string;tipo:string;serie:string;numero:string;contraparte:string;fecha:string;total:number;sunat:string}[]);
+
+  // Fallback a datos locales si no hay datos del API
+  const tc  = kpis?.totalCompras  ?? docs.filter(d=>d.op==='COMPRA').reduce((s,d)=>s+Math.abs(d.total),0);
+  const tv  = kpis?.totalVentas   ?? docs.filter(d=>d.op==='VENTA').reduce((s,d)=>s+d.total,0);
+  const igvC = kpis?.igvCredito   ?? 0;
+  const igvD = kpis?.igvDebito    ?? 0;
+  const igvNeto = kpis?.igvNeto   ?? (igvD - igvC);
+  const totalDocs = kpis?.docsTotal ?? docs.length;
+
+  const PIE_COLORS = [C.blue, C.violet, C.teal, C.amber, C.green];
+
+  // Pie data para top proveedores
+  const pieData = topProveedores.length > 0
+    ? topProveedores.map(p=>({name: p.nombre.substring(0,20), value: p.monto}))
+    : [{name:'Compras', value: Math.round(tc)}, {name:'Ventas', value: Math.round(tv)}];
+
   return <div style={{animation:'fadeIn .2s ease'}}>
-    <div style={{marginBottom:'1.5rem'}}><div style={{fontSize:22,fontWeight:800,color:C.t1}}>Dashboard Ejecutivo</div><div style={{fontSize:13,color:C.t3}}>Datos en tiempo real · {period}</div></div>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:10,marginBottom:'1.25rem'}}>
-      <StatCard label="Compras" value={fmt(tc)} sub={`${docs.filter(d=>d.op==='COMPRA').length} docs`} color={C.blue} icon="↓"/>
-      <StatCard label="Ventas" value={fmt(tv)} sub={`${docs.filter(d=>d.op==='VENTA').length} docs`} color={C.violet} icon="↑"/>
-      <StatCard label="IGV Crédito" value={fmt(igvC)} sub="aceptados" color={C.amber} icon="◑"/>
-      <StatCard label="Saldo banco" value={fmt(saldo)} sub="BCP Cta.Cte." color={C.teal} icon="⊟"/>
-      <StatCard label="Para CONCAR" value={docs.filter(d=>d.concar==='LISTO').length} sub="documentos" color={C.green} icon="⊙"/>
-      <StatCard label="Observados" value={docs.filter(d=>d.sunat==='OBSERVADO').length} sub="requieren atención" color={C.red} icon="⚠"/>
-    </div>
-    <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14,marginBottom:'1.25rem'}}>
-      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem'}}>
-        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>Evolución mensual — Compras vs Ventas</div>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={chart} barSize={14} barGap={4}>
-            <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false}/>
-            <XAxis dataKey="mes" tick={{fontSize:11,fill:C.t3}} axisLine={false} tickLine={false}/>
-            <YAxis tick={{fontSize:10,fill:C.t3}} axisLine={false} tickLine={false} tickFormatter={v=>'S/'+fmtN(v)}/>
-            <Tooltip formatter={(v:number,n:string)=>[fmt(v),n==='c'?'Compras':'Ventas']} contentStyle={{fontSize:12,borderRadius:8,border:`1px solid ${C.border}`}}/>
-            <Bar dataKey="c" fill={C.blue} radius={[4,4,0,0]}/><Bar dataKey="v" fill={C.violet} radius={[4,4,0,0]}/>
-          </BarChart>
-        </ResponsiveContainer>
+    <div style={{marginBottom:'1.5rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <div>
+        <div style={{fontSize:22,fontWeight:800,color:C.t1}}>Dashboard Ejecutivo</div>
+        <div style={{fontSize:13,color:C.t3}}>Datos reales de la BD · {period} {loading&&'· Cargando...'}</div>
       </div>
+      {empresa&&<Badge label={empresa.nombre} color="blue"/>}
+    </div>
+
+    {/* ALERTA DETRACCIONES */}
+    {kpis && (kpis.detrPendientes as number) > 0 && (
+      <div style={{background:C.redL,border:`1px solid ${C.redM}`,borderRadius:8,padding:'.75rem 1rem',marginBottom:'1rem',display:'flex',alignItems:'center',gap:10}}>
+        <span style={{fontSize:18}}>⚠</span>
+        <div>
+          <div style={{fontWeight:700,color:C.red,fontSize:13}}>Detracciones pendientes de depósito</div>
+          <div style={{fontSize:12,color:C.red}}>{kpis.detrPendientes as number} detracción(es) · Total: {fmt(kpis.detrMonto as number)}</div>
+        </div>
+        <Btn size="sm" color="red" onClick={()=>onNav('detracciones')}>Ver detracciones</Btn>
+      </div>
+    )}
+
+    {/* KPIs */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:10,marginBottom:'1.25rem'}}>
+      <StatCard label="Total Compras" value={fmt(tc)} sub={`${kpis?.docsCompras??docs.filter(d=>d.op==='COMPRA').length} docs`} color={C.blue} icon="↓"/>
+      <StatCard label="Total Ventas" value={fmt(tv)} sub={`${kpis?.docsVentas??docs.filter(d=>d.op==='VENTA').length} docs`} color={C.violet} icon="↑"/>
+      <StatCard label="IGV Crédito" value={fmt(igvC)} sub="compras aceptadas" color={C.amber} icon="◑"/>
+      <StatCard label="IGV Débito" value={fmt(igvD)} sub="ventas aceptadas" color={C.teal} icon="◐"/>
+      <StatCard label="IGV Neto" value={fmt(Math.abs(igvNeto))} sub={igvNeto>=0?'a pagar':'a favor'} color={igvNeto>=0?C.red:C.green} icon="⊜"/>
+      <StatCard label="Docs del mes" value={totalDocs} sub={`${kpis?.docsAceptados??0} aceptados`} color={C.navy} icon="◈"/>
+    </div>
+
+    {/* GRÁFICOS */}
+    <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14,marginBottom:'1.25rem'}}>
+      {/* Barras: Compras vs Ventas */}
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem'}}>
-        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>Composición abril</div>
-        <ResponsiveContainer width="100%" height={160}>
+        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>Compras vs Ventas — Últimos 6 meses</div>
+        {chartData.length > 0 ? (
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={chartData} barSize={14} barGap={4}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false}/>
+              <XAxis dataKey="period" tick={{fontSize:10,fill:C.t3}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fontSize:10,fill:C.t3}} axisLine={false} tickLine={false} tickFormatter={v=>'S/'+fmtN(v)}/>
+              <Tooltip formatter={(v:number,n:string)=>[fmt(v),n==='compras'?'Compras':'Ventas']} contentStyle={{fontSize:12,borderRadius:8,border:`1px solid ${C.border}`}}/>
+              <Bar dataKey="compras" name="compras" fill={C.blue} radius={[4,4,0,0]}/>
+              <Bar dataKey="ventas"  name="ventas"  fill={C.violet} radius={[4,4,0,0]}/>
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <div style={{height:200,display:'flex',alignItems:'center',justifyContent:'center',color:C.t4,fontSize:13}}>
+            Sin datos para el período seleccionado
+          </div>
+        )}
+        <div style={{display:'flex',gap:16,justifyContent:'center',marginTop:8,fontSize:11}}>
+          <div style={{display:'flex',alignItems:'center',gap:4}}><span style={{width:10,height:10,borderRadius:2,background:C.blue,display:'inline-block'}}></span><span style={{color:C.t3}}>Compras</span></div>
+          <div style={{display:'flex',alignItems:'center',gap:4}}><span style={{width:10,height:10,borderRadius:2,background:C.violet,display:'inline-block'}}></span><span style={{color:C.t3}}>Ventas</span></div>
+        </div>
+      </div>
+
+      {/* Dona: Top proveedores */}
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem'}}>
+        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>
+          {topProveedores.length > 0 ? 'Top 5 Proveedores' : 'Compras vs Ventas'}
+        </div>
+        <ResponsiveContainer width="100%" height={150}>
           <PieChart>
-            <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value">
-              {pieData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+            <Pie data={pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" paddingAngle={2}>
+              {pieData.map((_,i)=><Cell key={i} fill={PIE_COLORS[i%PIE_COLORS.length]}/>)}
             </Pie>
-            <Tooltip formatter={(v:number)=>fmt(v)} contentStyle={{fontSize:12,borderRadius:8}}/>
+            <Tooltip formatter={(v:number)=>fmt(v)} contentStyle={{fontSize:11,borderRadius:8}}/>
           </PieChart>
         </ResponsiveContainer>
-        <div style={{display:'flex',justifyContent:'center',gap:16,fontSize:11}}>
-          {pieData.map((d,i)=><div key={d.name} style={{display:'flex',alignItems:'center',gap:4}}><span style={{width:10,height:10,borderRadius:2,background:COLORS[i]}}></span><span style={{color:C.t3}}>{d.name}</span></div>)}
+        <div style={{marginTop:8}}>
+          {pieData.slice(0,5).map((d,i)=>(
+            <div key={d.name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:11,marginBottom:3}}>
+              <div style={{display:'flex',alignItems:'center',gap:5}}>
+                <span style={{width:8,height:8,borderRadius:'50%',background:PIE_COLORS[i%PIE_COLORS.length],flexShrink:0,display:'inline-block'}}></span>
+                <span style={{color:C.t2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:120}}>{d.name}</span>
+              </div>
+              <span style={{color:C.t3,fontFamily:'JetBrains Mono,monospace',fontSize:10}}>{fmt(d.value)}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
+
+    {/* ÚLTIMOS DOCUMENTOS */}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1.25rem'}}>
+      <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>Últimos documentos descargados</div>
+      {ultimosDocs.length > 0 ? (
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead>
+            <tr>
+              <Th>Comprobante</Th><Th>Proveedor / Cliente</Th><Th>Fecha</Th><Th right>Monto</Th><Th center>Estado</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {ultimosDocs.map(d=>(
+              <tr key={d.id}>
+                <Td mono small>{d.serie}-{d.numero}</Td>
+                <Td small>{d.contraparte.substring(0,30)}</Td>
+                <Td small>{d.fecha}</Td>
+                <Td right mono small>{fmt(Math.abs(d.total))}</Td>
+                <Td center><Badge label={d.sunat} color={colEst(d.sunat) as BadgeColor} sm/></Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div style={{color:C.t4,fontSize:13,textAlign:'center',padding:'1rem'}}>
+          Sin documentos recientes. Ejecuta una descarga masiva.
+        </div>
+      )}
+    </div>
+
+    {/* ACCESOS RÁPIDOS */}
     <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
-      {[['↓↓ Descarga Masiva','Sincronizar SUNAT/SIRE con parser XML + IA',C.blue,'descarga_masiva'],['⊙ CONCAR SQL','Exportar lotes con aprobación humana',C.teal,'concar'],['✦ Copiloto IA','Consultar datos contables en lenguaje natural',C.violet,'copiloto']].map(([t,s,c,nav])=>(
+      {[
+        ['↓↓ Descarga Masiva','Sincronizar SUNAT/SIRE con parser XML + IA',C.blue,'descarga_masiva'],
+        ['⊙ CONCAR SQL','Exportar lotes con aprobación humana',C.teal,'concar'],
+        ['✦ Copiloto IA','Consultar datos contables en lenguaje natural',C.violet,'copiloto']
+      ].map(([t,s,c,nav])=>(
         <div key={t as string} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',borderTop:`3px solid ${c}`,cursor:'pointer'}} onClick={()=>onNav(nav as string)}>
           <div style={{fontSize:14,fontWeight:700,color:c as string}}>{t as string}</div>
           <div style={{fontSize:12,color:C.t3,marginTop:4,lineHeight:1.5}}>{s as string}</div>
