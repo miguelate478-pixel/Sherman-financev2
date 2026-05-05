@@ -234,14 +234,13 @@ export class DirectSunatProvider implements ISunatProvider {
     const esVentas = p.operation === 'VENTAS';
 
     // URLs confirmadas con el portal e-factura real:
-    // RVIE (ventas): /rvie/propuesta/web/propuesta/{periodo}/comprobantes ✅
-    // RCE (compras): pendiente confirmar URL exacta del portal
+    // RVIE (ventas): /rvie/propuesta/web/propuesta/{periodo}/comprobantes ✅ (token API)
+    // RCE (compras): endpoint /comprobantes solo funciona con token de browser (authorization_token)
+    //                Con token de API solo disponible el resumen TXT
     const comprobantesUrls = esVentas
       ? [`${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/comprobantes`]
       : [
           `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/comprobantes`,
-          `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/comprobantesrecibidos`,
-          `${SIRE_BASE}/rvierce/resumen/web/resumencomprobantes/${periodo}/1/0/comprobantes?codLibro=080000`,
         ];
 
     const allDocuments: SunatDocument[] = [];
