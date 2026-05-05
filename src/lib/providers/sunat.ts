@@ -235,11 +235,11 @@ export class DirectSunatProvider implements ISunatProvider {
 
     // URLs confirmadas con el portal e-factura real:
     // RVIE (ventas): /rvie/propuesta/web/propuesta/{periodo}/comprobantes ✅ (token API)
-    // RCE (compras): endpoint /comprobantes solo funciona con token de browser (authorization_token)
-    //                Con token de API solo disponible el resumen TXT
+    // RCE (compras): /rce/propuesta/web/propuesta/{periodo}/busqueda?codTipoOpe=1 ✅ (token portal)
     const comprobantesUrls = esVentas
       ? [`${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/comprobantes`]
       : [
+          `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/busqueda?codTipoOpe=1`,
           `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/comprobantes`,
         ];
 
@@ -327,7 +327,9 @@ export class DirectSunatProvider implements ISunatProvider {
     }
 
     do {
-      const url = `${comprobantesUrl}?page=${page}&perPage=${perPage}`;
+      const url = comprobantesUrl.includes('?')
+        ? `${comprobantesUrl}&page=${page}&perPage=${perPage}`
+        : `${comprobantesUrl}?page=${page}&perPage=${perPage}`;
       console.log(`[SIRE] Comprobantes ${p.operation} ${periodo} página ${page}: ${url}`);
       try {
         let res = await fetch(url, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(30000) });
@@ -358,18 +360,31 @@ export class DirectSunatProvider implements ISunatProvider {
           const serie  = String(reg.numSerieCDP ?? '');
           const numero = String(reg.numCDP ?? '');
           const tipo   = String(reg.codTipoCDP ?? '01');
-          const fecha  = String(reg.fecEmision ?? '').split('/').reverse().join('-'); // DD/MM/YYYY → YYYY-MM-DD
-          const total  = Number(reg.mtoTotalCP ?? 0);
-          const base   = Number(reg.mtoBIGravada ?? 0);
-          const igv    = Number(reg.mtoIGV ?? 0);
+          // Fecha puede venir como YYYY-MM-DD o DD/MM/YYYY
+          const fechaRaw = String(reg.fecEmision ?? '');
+          const fecha = fechaRaw.includes('/') ? fechaRaw.split('/').reverse().join('-') : fechaRaw.substring(0,10);
           const moneda = String(reg.codMoneda ?? 'PEN');
 
+          // Montos: RVIE usa campos directos, RCE busqueda usa objeto montos
+          const montos = reg.montos as Record<string,unknown> | undefined;
+          const total  = Number(montos?.mtoTotalCp ?? reg.mtoTotalCP ?? 0);
+          const base   = Number(montos?.mtoBIGravadaDG ?? reg.mtoBIGravada ?? 0);
+          const igv    = Number(montos?.mtoIgvIpmDG ?? reg.mtoIGV ?? 0);
+
           // Para ventas: emisor=empresa, receptor=cliente
-          // Para compras: emisor=proveedor, receptor=empresa
-          const rucEmisor   = esVentas ? p.ruc : String(reg.numDocIdentidad ?? '');
-          const rsEmisor    = esVentas ? String(reg.nomRazonSocial ?? '') : String(reg.nomRazonSocialCliente ?? '');
-          const rucReceptor = esVentas ? String(reg.numDocIdentidad ?? '') : p.ruc;
-          const rsReceptor  = esVentas ? String(reg.nomRazonSocialCliente ?? '') : String(reg.nomRazonSocial ?? '');
+          // Para compras (busqueda): proveedor en nomRazonSocialProveedor/numDocIdentidadProveedor
+          const rucEmisor   = esVentas
+            ? p.ruc
+            : String(reg.numDocIdentidadProveedor ?? reg.numDocIdentidad ?? '');
+          const rsEmisor    = esVentas
+            ? String(reg.nomRazonSocial ?? '')
+            : String(reg.nomRazonSocialProveedor ?? reg.nomRazonSocialCliente ?? '');
+          const rucReceptor = esVentas
+            ? String(reg.numDocIdentidad ?? reg.numDocIdentidadProveedor ?? '')
+            : p.ruc;
+          const rsReceptor  = esVentas
+            ? String(reg.nomRazonSocialCliente ?? reg.nomRazonSocialProveedor ?? '')
+            : String(reg.nomRazonSocial ?? '');
 
           allDocuments.push({
             id:          `${serie}-${numero}`,
