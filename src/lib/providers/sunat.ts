@@ -222,217 +222,105 @@ export class DirectSunatProvider implements ISunatProvider {
     const cSec = p.clientSecret || '';
     const periodo = p.period.replace('-', ''); // "2025-12" → "202512"
 
-    // 1. Obtener token con auto-refresh
+    // 1. Obtener token
     let token = p.sireToken || '';
     if (!token) {
       token = await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', cId, cSec);
     }
 
     const SIRE_BASE = 'https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros';
-    const headers = this.sireHeaders(token);
 
-    let numTicket = '';
-    let directBuffer: Buffer | null = null;
-
-    if (p.operation === 'VENTAS') {
-      // RVIE - endpoint ventas
-      const urlVentas = `${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/exportapropuesta?codOrigenEnvio=2&codTipoArchivo=0`;
-      console.log('[SIRE] Ventas GET', urlVentas);
-      try {
-        const res = await fetch(urlVentas, { headers });
-        if (res.ok) {
-          const data = await res.json() as { numTicket?: string };
-          numTicket = data?.numTicket ?? '';
-          console.log('[SIRE] Ventas ticket:', numTicket);
-        } else if (res.status === 401) {
-          token = await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', cId, cSec);
-          const res2 = await fetch(urlVentas, { headers: this.sireHeaders(token) });
-          if (res2.ok) { const d = await res2.json() as { numTicket?: string }; numTicket = d?.numTicket ?? ''; }
-        } else {
-          const body = await res.text();
-          console.log('[SIRE] Ventas error', res.status, body.substring(0, 300));
-        }
-      } catch(e) { console.error('[SIRE] Ventas fetch error:', (e as Error).message); }
-
-    } else {
-      // RCE - endpoint compras 5.34
-      const url534 = `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=2`;
-      console.log('[SIRE] 5.34 GET', url534);
-      try {
-        const res = await fetch(url534, { headers });
-        if (res.ok) {
-          const data = await res.json() as { numTicket?: string };
-          numTicket = data?.numTicket ?? '';
-          console.log('[SIRE] 5.34 ticket:', numTicket, 'data:', JSON.stringify(data));
-        } else if (res.status === 401) {
-          console.warn('[SIRE] 401 - refrescando token');
-          token = await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', cId, cSec);
-          const res2 = await fetch(url534, { headers: this.sireHeaders(token) });
-          if (res2.ok) { const d = await res2.json() as { numTicket?: string }; numTicket = d?.numTicket ?? ''; }
-          else { console.log('[SIRE] 5.34 retry', res2.status, (await res2.text()).substring(0,200)); }
-        } else {
-          const body = await res.text();
-          console.log('[SIRE] 5.34 HTTP', res.status, body.substring(0, 500));
-        }
-      } catch(e) { console.error('[SIRE] 5.34 error:', (e as Error).message); }
-
-      // Fallback: portal exporta directo
-      if (!numTicket) {
-        const urlPortal = `${SIRE_BASE}/rvierce/resumen/web/resumencomprobantes/${periodo}/1/0/exporta?codLibro=080000`;
-        console.log('[SIRE] Portal exporta GET', urlPortal);
-        try {
-          const res = await fetch(urlPortal, { headers: this.sireHeaders(token) });
-          if (res.ok) {
-            const buf = Buffer.from(await res.arrayBuffer());
-            if (buf.byteLength > 0) {
-              directBuffer = buf;
-              numTicket = `DIRECT_${periodo}_${Date.now()}`;
-              console.log('[SIRE] Portal exporta OK, size:', buf.byteLength);
-            }
-          } else { console.log('[SIRE] Portal exporta', res.status); }
-        } catch(e) { console.error('[SIRE] Portal error:', (e as Error).message); }
-      }
-
-      // Fallback: 5.53 reportecar
-      if (!numTicket) {
-        const url553 = `${SIRE_BASE}/rvierce/gestionlibro/web/comprobanteslibros/${periodo}/reportecar`;
-        for (const codFase of ['1','2','3']) {
-          try {
-            const res = await fetch(`${url553}?codOrigenEnvio=2&codLibro=080000&codFase=${codFase}`, { headers: this.sireHeaders(token) });
-            if (res.ok) {
-              const d = await res.json() as { numTicket?: string };
-              numTicket = d?.numTicket ?? '';
-              if (numTicket) { console.log('[SIRE] 5.53 ticket codFase', codFase, ':', numTicket); break; }
-            }
-          } catch {}
-        }
-      }
-    }
-
-    if (!numTicket) throw new Error('No se pudo obtener ticket de SIRE. El período puede no tener comprobantes.');
-
-    // 2. Si es descarga directa (buffer ya disponible)
-    let zipBuffer: Buffer | null = directBuffer;
-
-    // Código de libro según operación
-    const codLibro = p.operation === 'VENTAS' ? '140100' : '080100';
-
-    // 3. Si hay ticket, hacer polling + descarga inmediata
-    if (!zipBuffer && !numTicket.startsWith('DIRECT_')) {
-      const pollUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`;
-      let nomArchivo = '';
-      // Esperar 5s antes del primer poll para que SIRE procese el ticket
-      await new Promise(r => setTimeout(r, 5000));
-      for (let i = 0; i < 20; i++) {
-        if (i > 0) await new Promise(r => setTimeout(r, 2000));
-        // Sin codLibro ni codOrigenEnvio — esos parámetros causan 422
-        const params = `perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${numTicket}`;
-        try {
-          const res = await fetch(`${pollUrl}?${params}`, { headers: this.sireHeaders(token) });
-          if (!res.ok) {
-            const errBody = await res.text();
-            console.log(`[SIRE] Poll ${res.status}:`, errBody.substring(0, 300));
-            continue;
-          }
-          const data = await res.json() as { registros?: Record<string,unknown>[] };
-          const registros = data?.registros ?? [];
-          const item = Array.isArray(registros) ? registros[0] : registros as unknown as Record<string,unknown>;
-          if (!item) continue;
-          const codEstado = (item.codEstado ?? item.codEstadoProceso) as string | undefined;
-          console.log(`[SIRE] Poll ${i+1}: ticket ${numTicket} codEstado=${codEstado}`);
-          if (codEstado === '06' || codEstado === '3' || codEstado === '4') {
-            const archivos = (item.archivoReporte ?? []) as { nomArchivoReporte: string }[];
-            nomArchivo = archivos[0]?.nomArchivoReporte ?? '';
-            if (!nomArchivo) nomArchivo = `${p.ruc}_${p.operation}_${periodo}_${numTicket}.zip`;
-            console.log('[SIRE] Terminado. Archivo:', nomArchivo);
-
-            // Descargar ZIP INMEDIATAMENTE después de obtener el nombre
-            const dlUrl = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}`;
-            console.log('[SIRE] Descargando archivo inmediatamente:', dlUrl);
-            const dlRes = await fetch(dlUrl, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(60000) });
-            if (dlRes.ok) {
-              zipBuffer = Buffer.from(await dlRes.arrayBuffer());
-              console.log('[SIRE] ZIP descargado:', zipBuffer.byteLength, 'bytes');
-              break;
-            } else {
-              const dlBody = await dlRes.text();
-              console.log(`[SIRE] Descarga ${dlRes.status}:`, dlBody.substring(0, 200));
-              // Intentar con codLibro
-              const dlUrl2 = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=${codLibro}`;
-              const dlRes2 = await fetch(dlUrl2, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(60000) });
-              if (dlRes2.ok) {
-                zipBuffer = Buffer.from(await dlRes2.arrayBuffer());
-                console.log('[SIRE] ZIP descargado (con codLibro):', zipBuffer.byteLength, 'bytes');
-                break;
-              }
-              console.log(`[SIRE] Descarga2 ${dlRes2.status}`);
-            }
-            break;
-          }
-          if (codEstado === '05' || codEstado === '07') {
-            throw new Error(`Ticket ${numTicket} error estado ${codEstado}`);
-          }
-        } catch(e) { if ((e as Error).message.includes('Ticket')) throw e; }
-      }
-      if (!zipBuffer) throw new Error(`No se pudo descargar el archivo para ticket ${numTicket}`);
-    }
-
-    if (!zipBuffer || zipBuffer.byteLength === 0) {
-      return { period: p.period, operation: p.operation, docsFound:0, docsXml:0, docsPdf:0, docsCdr:0, errors:0, documents:[] };
-    }
-
-    // 5. Extraer XMLs del ZIP
-    const AdmZip = require('adm-zip');
-    const zip = new AdmZip(zipBuffer);
-    const entries = zip.getEntries();
-    console.log('[SIRE] Archivos en ZIP:', entries.map((e: { entryName: string }) => e.entryName).join(', '));
+    // 2. Obtener comprobantes directamente via endpoint /comprobantes (sin ZIP)
+    const esVentas = p.operation === 'VENTAS';
+    const comprobantesUrl = esVentas
+      ? `${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/comprobantes`
+      : `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/comprobantes`;
 
     const allDocuments: SunatDocument[] = [];
-    let totalXml = 0, totalPdf = 0, totalCdr = 0, totalErrors = 0;
+    let page = 1;
+    const perPage = 100;
+    let totalRegistros = 0;
 
-    for (const entry of entries) {
-      const name = (entry.entryName as string).toLowerCase();
-      if (name.endsWith('.pdf')) { totalPdf++; continue; }
-      if (name.endsWith('.xml') && (name.startsWith('r-') || name.includes('cdr'))) { totalCdr++; continue; }
-      if (name.endsWith('.xml')) {
-        totalXml++;
-        try {
-          const xmlContent = entry.getData().toString('utf8');
-          const { parseXmlUbl } = require('../xml-parser');
-          const parsed = await parseXmlUbl(xmlContent);
+    do {
+      const url = `${comprobantesUrl}?page=${page}&perPage=${perPage}`;
+      console.log(`[SIRE] Comprobantes ${p.operation} ${periodo} página ${page}: ${url}`);
+      try {
+        let res = await fetch(url, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(30000) });
+
+        // Refresh token si 401
+        if (res.status === 401) {
+          console.log('[SIRE] 401 — refrescando token');
+          token = await this.getSireToken(p.ruc, p.solUser??'', p.solPass??'', cId, cSec);
+          res = await fetch(url, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(30000) });
+        }
+
+        if (!res.ok) {
+          const body = await res.text();
+          console.log(`[SIRE] Comprobantes HTTP ${res.status}:`, body.substring(0, 300));
+          break;
+        }
+
+        const data = await res.json() as {
+          paginacion?: { totalRegistros: number };
+          registros?: Record<string, unknown>[];
+        };
+
+        totalRegistros = data.paginacion?.totalRegistros ?? 0;
+        const registros = data.registros ?? [];
+        console.log(`[SIRE] Página ${page}: ${registros.length} comprobantes (total: ${totalRegistros})`);
+
+        for (const reg of registros) {
+          const serie  = String(reg.numSerieCDP ?? '');
+          const numero = String(reg.numCDP ?? '');
+          const tipo   = String(reg.codTipoCDP ?? '01');
+          const fecha  = String(reg.fecEmision ?? '').split('/').reverse().join('-'); // DD/MM/YYYY → YYYY-MM-DD
+          const total  = Number(reg.mtoTotalCP ?? 0);
+          const base   = Number(reg.mtoBIGravada ?? 0);
+          const igv    = Number(reg.mtoIGV ?? 0);
+          const moneda = String(reg.codMoneda ?? 'PEN');
+
+          // Para ventas: emisor=empresa, receptor=cliente
+          // Para compras: emisor=proveedor, receptor=empresa
+          const rucEmisor   = esVentas ? p.ruc : String(reg.numDocIdentidad ?? '');
+          const rsEmisor    = esVentas ? String(reg.nomRazonSocial ?? '') : String(reg.nomRazonSocialCliente ?? '');
+          const rucReceptor = esVentas ? String(reg.numDocIdentidad ?? '') : p.ruc;
+          const rsReceptor  = esVentas ? String(reg.nomRazonSocialCliente ?? '') : String(reg.nomRazonSocial ?? '');
+
           allDocuments.push({
-            id:          `${parsed.header.serie}-${parsed.header.numero}`,
+            id:          `${serie}-${numero}`,
             ruc:         p.ruc,
-            serie:       parsed.header.serie,
-            numero:      parsed.header.numero,
-            tipo:        parsed.header.tipoDoc,
-            fecha:       parsed.header.fechaEmision,
-            total:       parsed.header.totalImporte,
-            moneda:      parsed.header.moneda,
-            rsEmisor:    parsed.header.rsEmisor,
-            rucEmisor:   parsed.header.rucEmisor,
-            rsReceptor:  parsed.header.rsReceptor,
-            rucReceptor: parsed.header.rucReceptor,
-            sunatStatus: 'ACEPTADO',
+            serie,
+            numero,
+            tipo,
+            fecha,
+            total,
+            moneda,
+            rsEmisor,
+            rucEmisor,
+            rsReceptor,
+            rucReceptor,
+            sunatStatus: reg.codEstadoComprobante === '1' ? 'ACEPTADO' : 'OBSERVADO',
             cdrStatus:   'OK',
           });
-          console.log('[SIRE] XML OK:', parsed.header.serie, parsed.header.numero);
-        } catch(e) {
-          totalErrors++;
-          console.error('[SIRE] XML error:', entry.entryName, (e as Error).message);
         }
-      }
-    }
 
-    console.log(`[SIRE] Resultado: ${allDocuments.length} docs | ${totalXml} XML | ${totalPdf} PDF | ${totalCdr} CDR | ${totalErrors} errores`);
+        page++;
+      } catch(e) {
+        console.error('[SIRE] Error obteniendo comprobantes:', (e as Error).message);
+        break;
+      }
+    } while ((page - 1) * perPage < totalRegistros);
+
+    console.log(`[SIRE] Total comprobantes obtenidos: ${allDocuments.length}`);
+
     return {
       period:    p.period,
       operation: p.operation,
       docsFound: allDocuments.length,
-      docsXml:   totalXml,
-      docsPdf:   totalPdf,
-      docsCdr:   totalCdr,
-      errors:    totalErrors,
+      docsXml:   0,
+      docsPdf:   0,
+      docsCdr:   0,
+      errors:    0,
       documents: allDocuments,
     };
   }
