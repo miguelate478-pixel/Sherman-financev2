@@ -979,7 +979,7 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
 // ══════════════════════════════════════════════════════════
 //  DOCUMENT TABLE VIEW (shared by Bandeja, Compras, Ventas)
 // ══════════════════════════════════════════════════════════
-function DocTableView({docs,titulo,sub,addToast,onRefresh}:{docs:Doc[];titulo:string;sub:string;addToast:(m:string,t?:ToastType)=>void;onRefresh:()=>void}) {
+function DocTableView({docs,titulo,sub,addToast,onRefresh,exportType,empresa,period}:{docs:Doc[];titulo:string;sub:string;addToast:(m:string,t?:ToastType)=>void;onRefresh:()=>void;exportType?:string;empresa?:Company|null;period?:string}) {
   const [q,setQ]=useState('');
   const [fEst,setFEst]=useState('');
   const [fConcar,setFConcar]=useState('');
@@ -999,16 +999,20 @@ function DocTableView({docs,titulo,sub,addToast,onRefresh}:{docs:Doc[];titulo:st
     <div style={{marginBottom:'1.25rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
       <div><div style={{fontSize:22,fontWeight:800,color:C.t1}}>{titulo}</div><div style={{fontSize:13,color:C.t3}}>{sub} · {filtrados.length}/{docs.length} documentos</div></div>
       <div style={{display:'flex',gap:8}}>
-        <Btn color="ghost" size="sm" onClick={()=>{
-          const XLSX2 = require('xlsx');
-          const cols = ['ID','Operación','Tipo','Serie','Número','Fecha','RUC Emisor','Razón Social Emisor','RUC Receptor','Razón Social Receptor','Moneda','Base','IGV','Total','SUNAT','CDR','Flujo','CONCAR','Período'];
-          const rows = filtrados.map(d=>[d.id,d.op,d.tipo,d.serie,d.num,d.fecha,d.ruc_e,d.rs_e,d.ruc_r,d.rs_r,d.moneda,d.base,d.igv,d.total,d.sunat,d.cdr,d.workflow,d.concar,d.period]);
-          const ws = XLSX2.utils.aoa_to_sheet([cols,...rows]);
-          ws['!cols']=cols.map((_,i)=>({wch:Math.max(cols[i].length,...rows.map(r=>String(r[i]??'').length),10)}));
-          const wb = XLSX2.utils.book_new();
-          XLSX2.utils.book_append_sheet(wb,ws,'Documentos');
-          XLSX2.writeFile(wb,`${titulo.replace(/[^a-zA-Z0-9]/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`);
-        }}>↓ Excel</Btn>
+        {exportType && empresa ? (
+          <Btn color="green" size="sm" onClick={()=>API.exportCSV(exportType, empresa.id, period)}>↓ Excel SIRE</Btn>
+        ) : (
+          <Btn color="ghost" size="sm" onClick={()=>{
+            const XLSX2 = require('xlsx');
+            const cols = ['ID','Operación','Tipo','Serie','Número','Fecha','RUC Emisor','Razón Social Emisor','RUC Receptor','Razón Social Receptor','Moneda','Base','IGV','Total','SUNAT','CDR','Flujo','CONCAR','Período'];
+            const rows = filtrados.map(d=>[d.id,d.op,d.tipo,d.serie,d.num,d.fecha,d.ruc_e,d.rs_e,d.ruc_r,d.rs_r,d.moneda,d.base,d.igv,d.total,d.sunat,d.cdr,d.workflow,d.concar,d.period]);
+            const ws = XLSX2.utils.aoa_to_sheet([cols,...rows]);
+            ws['!cols']=cols.map((_,i)=>({wch:Math.max(cols[i].length,...rows.map(r=>String(r[i]??'').length),10)}));
+            const wb = XLSX2.utils.book_new();
+            XLSX2.utils.book_append_sheet(wb,ws,'Documentos');
+            XLSX2.writeFile(wb,`${titulo.replace(/[^a-zA-Z0-9]/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`);
+          }}>↓ Excel</Btn>
+        )}
       </div>
     </div>
     <div style={{display:'flex',gap:8,marginBottom:'1rem',flexWrap:'wrap'}}>
@@ -2103,8 +2107,8 @@ export default function Dashboard() {
     sunat_centro: <SunatCentroView empresa={empresa} addToast={addToast} onNav={setActive}/>,
     descarga_masiva:<DescargaMasivaView empresa={empresa} addToast={addToast} onRefresh={refreshData} onSetPeriod={setPeriod} period={period}/>,
     jobs:         <JobsView empresa={empresa}/>,
-    compras:      <DocTableView docs={compras} titulo="Compras — Comprobantes recibidos" sub="SUNAT/SIRE" addToast={addToast} onRefresh={refreshData}/>,
-    ventas:       <DocTableView docs={ventas}  titulo="Ventas — Comprobantes emitidos"   sub="SUNAT/SIRE" addToast={addToast} onRefresh={refreshData}/>,
+    compras:      <DocTableView docs={compras} titulo="Compras — Comprobantes recibidos" sub="SUNAT/SIRE" addToast={addToast} onRefresh={refreshData} exportType="COMPRA" empresa={empresa} period={period}/>,
+    ventas:       <DocTableView docs={ventas}  titulo="Ventas — Comprobantes emitidos"   sub="SUNAT/SIRE" addToast={addToast} onRefresh={refreshData} exportType="VENTA"  empresa={empresa} period={period}/>,
     documentos_xml:<DocumentosXmlView docs={docs} empresa={empresa} addToast={addToast} onRefresh={refreshData}/>,
     bancos:       <BancosView movs={movs} empresa={empresa}/>,
     conciliacion: <ConciliacionView docs={docs} movs={movs} empresa={empresa} addToast={addToast} onRefresh={refreshData}/>,

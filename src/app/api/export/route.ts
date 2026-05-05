@@ -83,25 +83,87 @@ export async function GET(req: NextRequest) {
     if (companyId) filters.companyId = companyId;
     if (period)    filters.period    = period;
     const docs = await getDocuments(filters);
-    const cols = [
-      { key:'serie',       label:'Serie' },
-      { key:'number',      label:'Número' },
-      { key:'docType',     label:'Tipo' },
-      { key:'issueDate',   label:'Fecha Emisión' },
-      { key:'issuerRuc',   label:'RUC Emisor' },
-      { key:'issuerName',  label:'Razón Social Emisor' },
-      { key:'receiverRuc', label:'RUC Receptor' },
-      { key:'receiverName',label:'Razón Social Receptor' },
-      { key:'currency',    label:'Moneda' },
-      { key:'base',        label:'Base Imponible' },
-      { key:'igv',         label:'IGV' },
-      { key:'total',       label:'Total' },
-      { key:'sunatStatus', label:'Estado SUNAT' },
-      { key:'period',      label:'Período' },
+    const label = type === 'COMPRA' ? 'Registro de Compras' : 'Registro de Ventas';
+    const periodoTributario = period ? period.replace('-','') : '';
+
+    // Hoja 1: Comprobantes en formato PLE SUNAT
+    const headerRow = type === 'COMPRA'
+      ? ['Inc.','Fecha de emisión','Fecha Vcto/Pago','Tipo CP/Doc','Serie del CDP','Año','Nro CP o Doc.','Nro Final (Rango)','Tipo Doc Identidad','Nro Doc Identidad','Apellidos Nombres/ Razon Social','BI Gravado DG','IGV/IPM DG','BI Gravado DGNG','IGV/IPM DGNG','BI Gravado DNG','IGV/IPM DNG','Valor Adq. NG','ISC','ICBPER','Otros Trib/Cargos','Total CP','Moneda','Tipo de Cambio','Tipo de Nota','Est. Comp.','CAR SUNAT']
+      : ['Inc.','Fecha de emisión','Fecha Vcto/Pago','Tipo CP/Doc','Serie del CDP','Año','Nro CP o Doc.','Nro Final (Rango)','Tipo Doc Identidad','Nro Doc Identidad','Apellidos Nombres/ Razon Social','BI Gravado DG','IGV/IPM DG','BI Gravado DGNG','IGV/IPM DGNG','BI Gravado DNG','IGV/IPM DNG','Valor Adq. NG','ISC','ICBPER','Otros Trib/Cargos','Total CP','Moneda','Tipo de Cambio','Tipo de Nota','Est. Comp.'];
+
+    const TIPO_MAP: Record<string,string> = {'01':'Factura','03':'Boleta','07':'Nota de Crédito','08':'Nota de Débito','14':'Recibo Servicios Públicos'};
+
+    const dataRows = (docs as Record<string,unknown>[]).map(d => {
+      const base   = Number(d.base ?? 0);
+      const igv    = Number(d.igv ?? 0);
+      const total  = Number(d.total ?? 0);
+      const serie  = String(d.serie ?? '');
+      const numero = String(d.number ?? '');
+      const fecha  = String(d.issueDate ?? '').split('-').reverse().join('/'); // YYYY-MM-DD → DD/MM/YYYY
+      const rucEmisor = type === 'COMPRA' ? String(d.issuerRuc ?? '') : String(d.receiverRuc ?? '');
+      const rsEmisor  = type === 'COMPRA' ? String(d.issuerName ?? '') : String(d.receiverName ?? '');
+      const tipoDoc   = TIPO_MAP[String(d.docType ?? '01')] || String(d.docType ?? '');
+      const row: unknown[] = [
+        '',           // Inc.
+        fecha,        // Fecha emisión
+        fecha,        // Fecha Vcto
+        tipoDoc,      // Tipo CP
+        serie,        // Serie
+        '',           // Año
+        numero,       // Nro CP
+        '',           // Nro Final
+        '6',          // Tipo Doc Identidad (RUC=6)
+        rucEmisor,    // Nro Doc Identidad
+        rsEmisor,     // Razón Social
+        base > 0 ? base.toFixed(2) : '0.00',   // BI Gravado DG
+        igv > 0  ? igv.toFixed(2)  : '0.00',   // IGV DG
+        '0.00','0.00','0.00','0.00',            // DGNG, DNG
+        base === 0 ? Math.abs(total).toFixed(2) : '0.00', // Valor Adq NG
+        '0.00','0.00','0.00',                   // ISC, ICBPER, Otros
+        Math.abs(total).toFixed(2),             // Total CP
+        String(d.currency ?? 'PEN'),            // Moneda
+        '1.000',                                // Tipo Cambio
+        '',                                     // Tipo Nota
+        '1',                                    // Est. Comp.
+      ];
+      if (type === 'COMPRA') row.push(''); // CAR SUNAT
+      return row;
+    });
+
+    // Calcular totales
+    const totalDocs = docs.length;
+    const totalBase = (docs as Record<string,unknown>[]).reduce((s,d) => s + Number(d.base ?? 0), 0);
+    const totalIgv  = (docs as Record<string,unknown>[]).reduce((s,d) => s + Number(d.igv ?? 0), 0);
+    const totalMonto= (docs as Record<string,unknown>[]).reduce((s,d) => s + Math.abs(Number(d.total ?? 0)), 0);
+
+    // Hoja 2: Resumen
+    const resumenRows = [
+      ['Concepto', 'Valor'],
+      ['Período Tributario', periodoTributario],
+      ['Tipo de Registro', label + ' (' + (type === 'COMPRA' ? 'RCE' : 'RVIE') + ')'],
+      ['Fecha de Generación', new Date().toLocaleDateString('es-PE')],
+      ['Total Comprobantes', totalDocs],
+      ['Base Imponible Total', `S/ ${totalBase.toFixed(2)}`],
+      ['Total IGV', `S/ ${totalIgv.toFixed(2)}`],
+      ['Importe Total', `S/ ${totalMonto.toFixed(2)}`],
     ];
-    const label = type === 'COMPRA' ? 'Compras' : 'Ventas';
-    buffer = toExcel(docs as Record<string,unknown>[], cols, `${label} ${period||'todos'}`);
-    filename = `${label.toLowerCase()}_${period||'todos'}_${new Date().toISOString().slice(0,10)}`;
+
+    const wb = XLSX.utils.book_new();
+
+    // Hoja comprobantes
+    const ws1 = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
+    ws1['!cols'] = headerRow.map((h, i) => ({
+      wch: Math.max(String(h).length, ...dataRows.map(r => String(r[i] ?? '').length), 8)
+    }));
+    XLSX.utils.book_append_sheet(wb, ws1, label.substring(0, 31));
+
+    // Hoja resumen
+    const ws2 = XLSX.utils.aoa_to_sheet(resumenRows);
+    ws2['!cols'] = [{ wch: 25 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, ws2, 'Resumen');
+
+    buffer = Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+    filename = `${type === 'COMPRA' ? 'compras' : 'ventas'}_${period||'todos'}_${new Date().toISOString().slice(0,10)}`;
   }
 
   else if (type === 'document_lines') {
