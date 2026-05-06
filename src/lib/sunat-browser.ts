@@ -2,17 +2,10 @@
  * sunat-browser.ts
  * Automatiza el portal e-factura.sunat.gob.pe para descargar XMLs
  * de comprobantes recibidos (compras) usando Puppeteer + Chromium.
- *
- * Flujo:
- *  1. Login con credenciales SOL (RUC + usuario + clave)
- *  2. Navegar a "Mis Comprobantes Recibidos"
- *  3. Filtrar por período
- *  4. Descargar XML de cada comprobante
- *  5. Retornar mapa { docId: xmlContent }
  */
 
 export interface BrowserXmlResult {
-  docId:      string;   // serie-numero
+  docId:      string;
   serie:      string;
   numero:     string;
   tipo:       string;
@@ -21,66 +14,98 @@ export interface BrowserXmlResult {
 }
 
 export interface BrowserDownloadOptions {
-  ruc:        string;
-  solUser:    string;
-  solPass:    string;
-  period:     string;   // "2025-12"
-  maxDocs?:   number;   // límite de docs a descargar (default 50)
+  ruc:         string;
+  solUser:     string;
+  solPass:     string;
+  period:      string;   // "2025-12"
+  maxDocs?:    number;
   onProgress?: (msg: string) => void;
 }
 
-// ── Lazy-load puppeteer para no romper el build si no está disponible ──
-async function getBrowser() {
+// ── Encontrar el ejecutable de Chromium disponible ──────────────────
+async function findChromiumExecutable(): Promise<string> {
+  const { execSync } = await import('child_process');
+  const candidates = [
+    // Nix (Railway con nixpacks)
+    '/nix/store',
+    // Rutas comunes en Linux
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/snap/bin/chromium',
+  ];
+
+  // Buscar en /nix/store (nixpacks instala chromium aquí)
   try {
-    // En producción (Railway/Linux): usar chromium del sistema via @sparticuz/chromium
-    // En desarrollo (Windows/Mac): usar puppeteer-core con Chrome local
-    const puppeteer = await import('puppeteer-core');
-
-    let executablePath: string;
-    let args: string[];
-
-    if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
-      // Railway: usar @sparticuz/chromium
-      const chromium = await import('@sparticuz/chromium');
-      executablePath = await chromium.default.executablePath();
-      args = chromium.default.args;
-    } else {
-      // Desarrollo local: buscar Chrome instalado
-      const os = await import('os');
-      const platform = os.default.platform();
-      if (platform === 'win32') {
-        executablePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-      } else if (platform === 'darwin') {
-        executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      } else {
-        executablePath = '/usr/bin/google-chrome';
-      }
-      args = ['--no-sandbox', '--disable-setuid-sandbox'];
+    const nixChrome = execSync('find /nix/store -name "chromium" -type f 2>/dev/null | head -1', { timeout: 5000 })
+      .toString().trim();
+    if (nixChrome) {
+      console.log('[BROWSER] Chromium encontrado en Nix:', nixChrome);
+      return nixChrome;
     }
+  } catch {}
 
-    const browser = await puppeteer.default.launch({
-      executablePath,
-      args: [
-        ...args,
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-web-security',
-        '--disable-features=IsolateOrigins,site-per-process',
-        '--window-size=1280,800',
-      ],
-      headless: true,
-      timeout: 30000,
-    });
+  // Buscar via which
+  try {
+    const which = execSync('which chromium chromium-browser google-chrome 2>/dev/null | head -1', { timeout: 3000 })
+      .toString().trim();
+    if (which) {
+      console.log('[BROWSER] Chromium encontrado via which:', which);
+      return which;
+    }
+  } catch {}
 
-    return browser;
-  } catch (e) {
-    throw new Error(`No se pudo iniciar Chromium: ${(e as Error).message}`);
+  // Probar candidatos directamente
+  const { existsSync } = await import('fs');
+  for (const path of candidates) {
+    if (!path.includes('/nix/store') && existsSync(path)) {
+      console.log('[BROWSER] Chromium encontrado:', path);
+      return path;
+    }
   }
+
+  throw new Error('Chromium no encontrado. Verifica que nixpacks.toml incluye "chromium"');
 }
 
-// ── Esperar a que un selector aparezca con timeout ──
+// ── Lanzar browser ──────────────────────────────────────────────────
+async function getBrowser() {
+  const puppeteer = await import('puppeteer-core');
+
+  const executablePath = await findChromiumExecutable();
+  console.log('[BROWSER] Usando Chromium:', executablePath);
+
+  const browser = await puppeteer.default.launch({
+    executablePath,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--disable-extensions',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-background-networking',
+      '--disable-default-apps',
+      '--disable-sync',
+      '--disable-translate',
+      '--hide-scrollbars',
+      '--metrics-recording-only',
+      '--mute-audio',
+      '--safebrowsing-disable-auto-update',
+      '--window-size=1280,800',
+    ],
+    headless: true,
+    timeout: 30000,
+    ignoreHTTPSErrors: true,
+  });
+
+  return browser;
+}
+
+// ── Esperar selector con timeout ────────────────────────────────────
 async function waitFor(page: import('puppeteer-core').Page, selector: string, timeout = 15000): Promise<boolean> {
   try {
     await page.waitForSelector(selector, { timeout });
@@ -90,7 +115,7 @@ async function waitFor(page: import('puppeteer-core').Page, selector: string, ti
   }
 }
 
-// ── Login en el portal SOL de SUNAT ──
+// ── Login SOL ───────────────────────────────────────────────────────
 async function loginSol(
   page: import('puppeteer-core').Page,
   ruc: string,
@@ -98,85 +123,73 @@ async function loginSol(
   solPass: string,
   log: (m: string) => void
 ): Promise<boolean> {
-  log('Navegando al portal SOL...');
+  log('Navegando al portal SOL de SUNAT...');
+
+  // Ir directamente al login del portal e-factura
   await page.goto('https://e-factura.sunat.gob.pe/', {
-    waitUntil: 'networkidle2',
+    waitUntil: 'domcontentloaded',
     timeout: 30000,
   });
 
-  // Esperar formulario de login
-  const loginOk = await waitFor(page, 'input[name="txtRuc"], input[id="txtRuc"], #txtRuc', 10000);
-  if (!loginOk) {
-    // Intentar con el portal SOL directo
-    log('Intentando portal SOL directo...');
-    await page.goto('https://ww1.sunat.gob.pe/ol-ti-itconsultaunificadalibre/consultaUnificadaLibre/login', {
-      waitUntil: 'networkidle2',
-      timeout: 30000,
-    });
-  }
+  await new Promise(r => setTimeout(r, 3000));
+  log(`URL actual: ${page.url()}`);
 
-  log('Ingresando credenciales SOL...');
+  // Intentar encontrar el formulario de login
+  const loginSelectors = [
+    { ruc: '#txtRuc',      user: '#txtUsuario',  pass: '#txtContrasena', btn: '#btnAceptar' },
+    { ruc: '[name=txtRuc]', user: '[name=txtUsuario]', pass: '[name=txtContrasena]', btn: '[type=submit]' },
+  ];
 
-  // Intentar diferentes selectores para el formulario de login
-  const selectors = {
-    ruc:  ['#txtRuc', 'input[name="txtRuc"]', 'input[placeholder*="RUC"]'],
-    user: ['#txtUsuario', 'input[name="txtUsuario"]', 'input[placeholder*="usuario"]'],
-    pass: ['#txtContrasena', 'input[name="txtContrasena"]', 'input[type="password"]'],
-    btn:  ['#btnAceptar', 'button[type="submit"]', 'input[type="submit"]'],
-  };
+  for (const sel of loginSelectors) {
+    const rucEl = await page.$(sel.ruc);
+    if (!rucEl) continue;
 
-  const findAndFill = async (sels: string[], value: string): Promise<boolean> => {
-    for (const sel of sels) {
-      try {
-        const el = await page.$(sel);
-        if (el) {
-          await el.click({ clickCount: 3 });
-          await el.type(value, { delay: 50 });
-          return true;
-        }
-      } catch {}
+    log('Formulario de login encontrado, ingresando credenciales...');
+    await rucEl.click({ clickCount: 3 });
+    await rucEl.type(ruc, { delay: 80 });
+
+    const userEl = await page.$(sel.user);
+    if (userEl) { await userEl.click({ clickCount: 3 }); await userEl.type(solUser, { delay: 80 }); }
+
+    const passEl = await page.$(sel.pass);
+    if (passEl) { await passEl.click({ clickCount: 3 }); await passEl.type(solPass, { delay: 80 }); }
+
+    const btnEl = await page.$(sel.btn);
+    if (btnEl) {
+      await btnEl.click();
+      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+      await new Promise(r => setTimeout(r, 2000));
     }
-    return false;
-  };
-
-  const rucOk   = await findAndFill(selectors.ruc,  ruc);
-  const userOk  = await findAndFill(selectors.user, solUser);
-  const passOk  = await findAndFill(selectors.pass, solPass);
-
-  if (!rucOk || !userOk || !passOk) {
-    log('No se encontró el formulario de login');
-    return false;
+    break;
   }
 
-  // Click en botón de login
-  for (const sel of selectors.btn) {
-    try {
-      const btn = await page.$(sel);
-      if (btn) { await btn.click(); break; }
-    } catch {}
-  }
+  const urlAfter = page.url();
+  log(`URL post-login: ${urlAfter}`);
 
-  // Esperar navegación post-login
-  await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
-
-  // Verificar si el login fue exitoso
-  const url = page.url();
-  const title = await page.title();
-  log(`Post-login URL: ${url.substring(0, 80)}`);
-  log(`Post-login title: ${title}`);
-
-  // Si hay mensaje de error de login
-  const errorEl = await page.$('.error, .alert-danger, [class*="error"]');
-  if (errorEl) {
-    const errorText = await page.evaluate(el => el.textContent, errorEl);
-    log(`Error de login: ${errorText?.trim()}`);
+  // Verificar si hay error de login
+  const pageText = await page.evaluate(() => document.body?.innerText || '');
+  if (pageText.toLowerCase().includes('contraseña incorrecta') ||
+      pageText.toLowerCase().includes('usuario incorrecto') ||
+      pageText.toLowerCase().includes('datos incorrectos')) {
+    log('Error: credenciales incorrectas');
     return false;
   }
 
-  return true;
+  // Si redirigió fuera del login, asumimos éxito
+  if (!urlAfter.includes('login') && !urlAfter.includes('Login')) {
+    log('Login exitoso');
+    return true;
+  }
+
+  // Verificar si hay elementos post-login
+  const loggedIn = await waitFor(page, '.menu, nav, .navbar, #menu, [class*="menu"]', 5000);
+  if (loggedIn) { log('Login exitoso (menú detectado)'); return true; }
+
+  log('Login posiblemente exitoso (sin confirmación clara)');
+  return true; // Intentar continuar de todas formas
 }
 
-// ── Navegar a Mis Comprobantes Recibidos y descargar XMLs ──
+// ── Navegar y descargar XMLs de comprobantes recibidos ──────────────
 async function downloadReceivedXmls(
   page: import('puppeteer-core').Page,
   ruc: string,
@@ -187,134 +200,193 @@ async function downloadReceivedXmls(
   const results: BrowserXmlResult[] = [];
   const [year, month] = period.split('-');
 
+  // Interceptar respuestas XML del portal
+  const interceptedXmls: { url: string; content: string }[] = [];
+  await page.setRequestInterception(true);
+
+  page.on('request', req => {
+    req.continue();
+  });
+
+  page.on('response', async (response) => {
+    try {
+      const url = response.url();
+      const ct  = response.headers()['content-type'] || '';
+      if (ct.includes('xml') || url.includes('.xml') || url.includes('descargar')) {
+        const body = await response.text().catch(() => '');
+        if (body.length > 100 && (body.includes('<?xml') || body.includes('<Invoice') || body.includes('<CreditNote'))) {
+          interceptedXmls.push({ url, content: body });
+          log(`XML interceptado: ${url.split('/').pop()} (${body.length} bytes)`);
+        }
+      }
+    } catch {}
+  });
+
+  // Navegar al módulo de comprobantes recibidos
   log('Navegando a Mis Comprobantes Recibidos...');
 
-  // URL directa al módulo de comprobantes recibidos
-  const urls = [
+  const moduleUrls = [
     `https://e-factura.sunat.gob.pe/ol-ti-itconsultaunificadalibre/consultaUnificadaLibre/consulta/comprobante`,
     `https://ww1.sunat.gob.pe/ol-ti-itconsultaunificadalibre/consultaUnificadaLibre/consulta/comprobante`,
+    `https://e-factura.sunat.gob.pe/`,
   ];
 
-  let navigated = false;
-  for (const url of urls) {
+  let pageLoaded = false;
+  for (const url of moduleUrls) {
     try {
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
-      const found = await waitFor(page, 'select, input[type="date"], .form-control', 5000);
-      if (found) { navigated = true; log(`Módulo encontrado: ${url.substring(0, 60)}`); break; }
-    } catch {}
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await new Promise(r => setTimeout(r, 2000));
+      const found = await waitFor(page, 'select, input, form, table', 5000);
+      if (found) {
+        log(`Módulo cargado: ${url.substring(0, 70)}`);
+        pageLoaded = true;
+        break;
+      }
+    } catch (e) {
+      log(`Error navegando a ${url.substring(0, 50)}: ${(e as Error).message}`);
+    }
   }
 
-  if (!navigated) {
-    log('No se pudo navegar al módulo de comprobantes recibidos');
+  if (!pageLoaded) {
+    log('No se pudo cargar el módulo de comprobantes');
     return results;
   }
 
-  // Interceptar las respuestas de la API interna del portal
-  // El portal hace llamadas XHR/fetch a APIs internas cuando busca comprobantes
-  const xmlResponses: Map<string, string> = new Map();
+  // Tomar screenshot para diagnóstico
+  log(`Página actual: ${page.url()}`);
+  const pageTitle = await page.title();
+  log(`Título: ${pageTitle}`);
 
-  await page.setRequestInterception(true);
-  page.on('request', req => req.continue());
-  page.on('response', async (response) => {
-    const url = response.url();
-    const contentType = response.headers()['content-type'] || '';
-    if (url.includes('sunat.gob.pe') && (contentType.includes('xml') || url.includes('.xml'))) {
-      try {
-        const body = await response.text();
-        if (body.includes('<?xml') || body.includes('<Invoice') || body.includes('<CreditNote')) {
-          const key = url.split('/').pop() || url;
-          xmlResponses.set(key, body);
-          log(`XML interceptado: ${key} (${body.length} bytes)`);
-        }
-      } catch {}
-    }
-  });
+  // Intentar filtrar por período
+  log(`Buscando comprobantes del período ${year}-${month}...`);
 
-  // Intentar filtrar por período y buscar
-  log(`Filtrando por período ${year}-${month}...`);
+  // Buscar y llenar campos de fecha/período
+  const allSelects = await page.$$('select');
+  log(`Selects encontrados: ${allSelects.length}`);
 
-  // Seleccionar año y mes en los filtros
-  const yearSelects = await page.$$('select');
-  for (const sel of yearSelects) {
+  for (const sel of allSelects) {
     try {
-      const options = await page.evaluate(el => Array.from(el.options).map(o => o.value), sel);
-      if (options.includes(year)) {
-        await page.evaluate((el, val) => { el.value = val; el.dispatchEvent(new Event('change')); }, sel, year);
+      const opts = await page.evaluate(el => Array.from(el.options).map(o => ({ v: o.value, t: o.text })), sel);
+      const yearOpt = opts.find(o => o.v === year || o.t === year);
+      const monthOpt = opts.find(o => o.v === month || o.v === String(parseInt(month)));
+      if (yearOpt) {
+        await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); }, sel, yearOpt.v);
+        log(`Año seleccionado: ${year}`);
+      } else if (monthOpt) {
+        await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); }, sel, monthOpt.v);
+        log(`Mes seleccionado: ${month}`);
+      }
+    } catch {}
+  }
+
+  // Buscar inputs de fecha
+  const dateInputs = await page.$$('input[type="date"], input[type="text"][name*="fecha"], input[name*="Fecha"]');
+  if (dateInputs.length > 0) {
+    const fechaInicio = `01/${month}/${year}`;
+    const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+    const fechaFin = `${lastDay}/${month}/${year}`;
+    try {
+      await dateInputs[0].click({ clickCount: 3 });
+      await dateInputs[0].type(fechaInicio);
+      if (dateInputs[1]) {
+        await dateInputs[1].click({ clickCount: 3 });
+        await dateInputs[1].type(fechaFin);
+      }
+      log(`Fechas ingresadas: ${fechaInicio} - ${fechaFin}`);
+    } catch {}
+  }
+
+  // Click en buscar
+  const searchBtns = ['#btnBuscar', 'button[type="submit"]', '.btn-primary', 'input[value="Buscar"]', 'button:contains("Buscar")'];
+  for (const sel of searchBtns) {
+    try {
+      const btn = await page.$(sel);
+      if (btn) {
+        await btn.click();
+        log('Botón buscar clickeado');
+        await new Promise(r => setTimeout(r, 3000));
         break;
       }
     } catch {}
   }
 
-  // Buscar botón de consulta
-  const searchBtns = ['#btnBuscar', 'button[type="submit"]', '.btn-primary', 'input[value="Buscar"]'];
-  for (const sel of searchBtns) {
-    try {
-      const btn = await page.$(sel);
-      if (btn) { await btn.click(); await new Promise(r => setTimeout(r, 2000)); break; }
-    } catch {}
-  }
-
   // Esperar resultados
-  await waitFor(page, 'table tbody tr, .resultado, .comprobante-item', 10000);
+  await waitFor(page, 'table tbody tr, .resultado, [class*="result"]', 10000);
+  await new Promise(r => setTimeout(r, 2000));
 
-  // Obtener lista de comprobantes de la tabla
-  const rows = await page.$$('table tbody tr');
-  log(`Filas encontradas en tabla: ${rows.length}`);
+  // Contar filas
+  const rowCount = await page.$$eval('table tbody tr', rows => rows.length).catch(() => 0);
+  log(`Filas en tabla: ${rowCount}`);
 
+  // Intentar descargar XMLs de cada fila
   let processed = 0;
-  for (const row of rows.slice(0, maxDocs)) {
-    if (processed >= maxDocs) break;
+  for (let i = 0; i < Math.min(rowCount, maxDocs); i++) {
     try {
-      // Buscar botón de descarga XML en la fila
-      const xmlBtn = await row.$('a[href*=".xml"], button[title*="XML"], a[title*="XML"], .btn-xml');
-      if (xmlBtn) {
-        // Obtener datos del comprobante de la fila
-        const cells = await row.$$('td');
-        const cellTexts = await Promise.all(cells.map(c => page.evaluate(el => el.textContent?.trim() || '', c)));
-        log(`Descargando XML de fila: ${cellTexts.slice(0, 4).join(' | ')}`);
+      const rows = await page.$$('table tbody tr');
+      if (i >= rows.length) break;
 
-        // Click en el botón XML — puede abrir una nueva pestaña o descargar
-        const [newPage] = await Promise.all([
+      const row = rows[i];
+      const cells = await row.$$eval('td', tds => tds.map(td => td.textContent?.trim() || ''));
+      log(`Fila ${i + 1}: ${cells.slice(0, 5).join(' | ')}`);
+
+      // Buscar botón/link de descarga XML
+      const xmlLink = await row.$('a[href*="xml"], a[title*="XML"], button[title*="XML"], [onclick*="xml"]');
+      if (xmlLink) {
+        // Capturar nueva pestaña o descarga
+        const [popup] = await Promise.all([
           new Promise<import('puppeteer-core').Page | null>(resolve => {
-            page.once('popup', p => resolve(p));
-            setTimeout(() => resolve(null), 3000);
+            const timeout = setTimeout(() => resolve(null), 5000);
+            page.once('popup', p => { clearTimeout(timeout); resolve(p); });
           }),
-          xmlBtn.click(),
+          xmlLink.click(),
         ]);
 
-        if (newPage) {
+        if (popup) {
           await new Promise(r => setTimeout(r, 2000));
-          const content = await newPage.content();
+          const content = await popup.content();
           if (content.includes('<?xml') || content.includes('<Invoice')) {
-            const serie  = cellTexts[2]?.split('-')[0] || '';
-            const numero = cellTexts[2]?.split('-')[1] || '';
-            results.push({ docId: `${serie}-${numero}`, serie, numero, tipo: '01', xmlContent: content });
-            log(`XML obtenido: ${serie}-${numero}`);
+            // Extraer serie y número de las celdas
+            const serieNum = cells.find(c => /[A-Z]\d{3}-\d+/.test(c)) || '';
+            const [serie, numero] = serieNum.split('-');
+            results.push({
+              docId: serieNum,
+              serie: serie || `DOC${i}`,
+              numero: numero || String(i),
+              tipo: '01',
+              xmlContent: content,
+            });
+            log(`XML obtenido: ${serieNum}`);
           }
-          await newPage.close();
+          await popup.close().catch(() => {});
         }
         processed++;
       }
     } catch (e) {
-      log(`Error en fila: ${(e as Error).message}`);
+      log(`Error en fila ${i}: ${(e as Error).message}`);
     }
   }
 
   // Si no obtuvimos XMLs via clicks, usar los interceptados
-  if (results.length === 0 && xmlResponses.size > 0) {
-    log(`Usando ${xmlResponses.size} XMLs interceptados...`);
-    for (const [key, xml] of xmlResponses) {
-      const match = key.match(/(\w+)-(\d+)/);
-      if (match) {
-        results.push({ docId: key, serie: match[1], numero: match[2], tipo: '01', xmlContent: xml });
-      }
+  if (results.length === 0 && interceptedXmls.length > 0) {
+    log(`Usando ${interceptedXmls.length} XMLs interceptados de las respuestas HTTP`);
+    for (const { url, content } of interceptedXmls) {
+      const filename = url.split('/').pop() || '';
+      const match = filename.match(/([A-Z]\d{3})-(\d+)/);
+      results.push({
+        docId:      match ? `${match[1]}-${match[2]}` : filename,
+        serie:      match?.[1] || 'UNK',
+        numero:     match?.[2] || '0',
+        tipo:       '01',
+        xmlContent: content,
+      });
     }
   }
 
+  log(`Total XMLs obtenidos: ${results.length}`);
   return results;
 }
 
-// ── Función principal exportada ──
+// ── Función principal exportada ─────────────────────────────────────
 export async function downloadXmlsViaBrowser(opts: BrowserDownloadOptions): Promise<BrowserXmlResult[]> {
   const log = opts.onProgress ?? ((m: string) => console.log(`[BROWSER] ${m}`));
   const maxDocs = opts.maxDocs ?? 50;
@@ -328,19 +400,14 @@ export async function downloadXmlsViaBrowser(opts: BrowserDownloadOptions): Prom
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
 
-    // Login
     const loggedIn = await loginSol(page, opts.ruc, opts.solUser, opts.solPass, log);
-    if (!loggedIn) {
-      throw new Error('Login SOL fallido — verificar credenciales');
-    }
-    log('Login SOL exitoso');
+    if (!loggedIn) throw new Error('Login SOL fallido — verificar credenciales');
 
-    // Descargar XMLs
     const results = await downloadReceivedXmls(page, opts.ruc, opts.period, maxDocs, log);
-    log(`Total XMLs obtenidos: ${results.length}`);
-
     return results;
   } finally {
     if (browser) {
