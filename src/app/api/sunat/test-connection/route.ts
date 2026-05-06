@@ -137,3 +137,67 @@ export async function GET(req: NextRequest) {
 
   return ok({ server: 'Railway', connectivity, ruc, solUser, clientId, tokenResult, propuestaResults });
 }
+
+// POST: diagnóstico del sistema (buscar Chromium, listar paths)
+export async function POST(req: NextRequest) {
+  const user = await getUser(req);
+  if (!user) return unauthorized();
+
+  const { execSync } = await import('child_process');
+  const { existsSync } = await import('fs');
+
+  const diag: Record<string, unknown> = {};
+
+  // 1. Variables de entorno relevantes
+  diag.env = {
+    CHROMIUM_PATH: process.env.CHROMIUM_PATH || null,
+    PATH: process.env.PATH?.substring(0, 200),
+    NODE_ENV: process.env.NODE_ENV,
+    RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT || null,
+  };
+
+  // 2. Rutas fijas
+  const fixed = [
+    '/usr/bin/chromium', '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
+    '/usr/local/bin/chromium', '/snap/bin/chromium',
+    '/opt/google/chrome/chrome', '/nix/var/nix/profiles/default/bin/chromium',
+  ];
+  diag.fixedPaths = fixed.map(p => ({ path: p, exists: existsSync(p) }));
+
+  // 3. which
+  const whichResults: Record<string, string> = {};
+  for (const cmd of ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable']) {
+    try { whichResults[cmd] = execSync(`which ${cmd} 2>/dev/null`, { timeout: 3000, encoding: 'utf8' }).trim(); }
+    catch { whichResults[cmd] = 'not found'; }
+  }
+  diag.which = whichResults;
+
+  // 4. ls /nix/store | grep chrom
+  try {
+    diag.nixStore = execSync('ls /nix/store 2>/dev/null | grep -i chrom | head -10', { timeout: 5000, encoding: 'utf8' }).trim();
+  } catch (e) { diag.nixStore = `error: ${(e as Error).message}`; }
+
+  // 5. find /nix -name chromium
+  try {
+    diag.findNix = execSync('find /nix -name "chromium" -type f 2>/dev/null | head -5', { timeout: 8000, encoding: 'utf8' }).trim();
+  } catch (e) { diag.findNix = `error: ${(e as Error).message}`; }
+
+  // 6. ls /usr/bin | grep chrom
+  try {
+    diag.usrBin = execSync('ls /usr/bin 2>/dev/null | grep -i chrom', { timeout: 3000, encoding: 'utf8' }).trim();
+  } catch (e) { diag.usrBin = `error: ${(e as Error).message}`; }
+
+  // 7. dpkg/apt
+  try {
+    diag.dpkg = execSync('dpkg -l | grep -i chrom 2>/dev/null | head -5', { timeout: 3000, encoding: 'utf8' }).trim();
+  } catch { diag.dpkg = 'not available'; }
+
+  // 8. Verificar si puppeteer-core está instalado
+  try {
+    const pkg = await import('puppeteer-core');
+    diag.puppeteerCore = 'installed, version: ' + (pkg as Record<string,unknown>).default?.toString?.().substring(0,50);
+  } catch (e) { diag.puppeteerCore = `not found: ${(e as Error).message}`; }
+
+  return ok(diag);
+}
