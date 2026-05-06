@@ -1,1 +1,0 @@
-﻿{"numRuc":"20610169849","perPeriodoTributario":"202510","codTipoResumen":"1","cantidad":{"porcentajeRelFiscal":11.11,"porcentajeNoRelFiscal":0,"porcentajeSinValidaciones":88.89,"total":9},"monto":{"porcentajeRelFiscal":5.09,"porcentajeNoRelFiscal":0,"porcentajeSinValidaciones":94.91,"total":-2139.530}}
