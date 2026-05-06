@@ -492,17 +492,19 @@ export class DirectSunatProvider implements ISunatProvider {
     const per = period ? period.replace('-', '') : '';
     const params = new URLSearchParams({
       numTicket: ticket,
-      page:    '1',
-      perPage: '10',
-      perIni:  per,
-      perFin:  per,
+      page:      '1',
+      perPage:   '10',
+      perIni:    per,
+      perFin:    per,
+      codLibro:  '080000',  // requerido por SUNAT
+      codOrigenEnvio: '2',
     });
     const res = await fetch(
       `${this.sireBase}/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?${params}`,
       { headers: this.sireHeaders(token), signal: AbortSignal.timeout(10000) }
     );
     const rawText = await res.text();
-    console.log(`[SIRE] consultarTicket HTTP ${res.status} raw COMPLETO:`, rawText);
+    console.log(`[SIRE] consultarTicket HTTP ${res.status} raw:`, rawText.substring(0, 600));
     if (!res.ok) {
       console.error(`[SIRE] consultarTicket error ${res.status}`);
       return { numTicket: ticket, estado: undefined as unknown as string };
@@ -512,29 +514,35 @@ export class DirectSunatProvider implements ISunatProvider {
       estado: string;
       codProceso?: string | number;
       codEstadoProceso?: string;
-      desEstadoProceso?: string;
-      archivoReporte?: { nomArchivoReporte: string }[];
+      archivoReporte?: { nomArchivoReporte: string; codTipoArchivoReporte?: string }[];
       registros?: {
+        numTicket?: string;
         codProceso?: string | number;
         codEstadoProceso?: string;
-        archivoReporte?: { nomArchivoReporte: string }[];
+        archivoReporte?: { nomArchivoReporte: string; codTipoArchivoReporte?: string }[];
+        detalleTicket?: { nomArchivoReporte?: string };
       }[];
     };
 
-    const registro = data.registros?.[0] ?? data;
-    const codEstado = registro.codEstadoProceso ?? data.codEstadoProceso;
+    const registro = data.registros?.find(r => String(r.numTicket) === ticket)
+      ?? data.registros?.[0]
+      ?? data;
+
+    // Manual v25: codProceso 3/4 = terminado, 5 = error
+    // Fallback: codEstadoProceso 06 = terminado, 07 = error
+    const codProceso    = String(registro.codProceso ?? '');
+    const codEstado     = String(registro.codEstadoProceso ?? data.codEstadoProceso ?? '');
     const archivoReporte = registro.archivoReporte ?? data.archivoReporte;
+    const nomArchivo    = archivoReporte?.[0]?.nomArchivoReporte
+      ?? (registro as Record<string,unknown>).detalleTicket as string | undefined;
 
-    console.log(`[SIRE] consultarTicket codEstadoProceso=${codEstado} archivos=${archivoReporte?.length ?? 0}`);
+    console.log(`[SIRE] consultarTicket codProceso=${codProceso} codEstado=${codEstado} archivo=${nomArchivo} archivos=${archivoReporte?.length ?? 0}`);
 
-    // codEstadoProceso "06" = Terminado, "07" = Error
-    if (codEstado === '06') {
-      return { ...data, archivoReporte, estado: '06' };
-    }
-    if (codEstado === '07') {
-      return { ...data, estado: '07' };
-    }
-    // En proceso o desconocido — seguir polling
+    const terminado = codProceso === '3' || codProceso === '4' || codEstado === '06';
+    const error     = codProceso === '5' || codEstado === '07';
+
+    if (terminado) return { ...data, archivoReporte, estado: '06', codProceso };
+    if (error)     return { ...data, estado: '07' };
     return { ...data, estado: undefined as unknown as string };
   }
 
