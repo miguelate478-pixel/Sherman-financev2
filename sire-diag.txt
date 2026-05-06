@@ -1,1 +1,16 @@
-﻿
+﻿curl 'https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rvierce/resumen/web/resumencomprobantes/202601/1/0/exporta?codLibro=080000' \
+  -X 'OPTIONS' \
+  -H 'Accept: */*' \
+  -H 'Accept-Language: es-419,es;q=0.9,es-ES;q=0.8,en;q=0.7,en-GB;q=0.6,en-US;q=0.5,es-PE;q=0.4' \
+  -H 'Access-Control-Request-Headers: authorization' \
+  -H 'Access-Control-Request-Method: GET' \
+  -H 'Connection: keep-alive' \
+  -H 'Origin: https://e-factura.sunat.gob.pe' \
+  -H 'Referer: https://e-factura.sunat.gob.pe/' \
+  -H 'Sec-Fetch-Dest: empty' \
+  -H 'Sec-Fetch-Mode: cors' \
+  -H 'Sec-Fetch-Site: same-site' \
+  -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0'@
+
+no se puede validar pim porque no hay capacidad no hay
+de acuerdo a lo indicado a la call casos para validar configurar pim tu mongo no se podrá validar por temas de alcance
