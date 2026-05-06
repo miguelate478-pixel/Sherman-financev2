@@ -1142,6 +1142,27 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
           <Btn color="blue" full disabled={running} onClick={iniciar}>
             {running?<><Spinner size={14} color="#fff"/>Procesando...</>:'↓↓ Iniciar descarga masiva'}
           </Btn>
+          <div style={{marginTop:8}}>
+            <Btn color="teal" full disabled={running} onClick={async()=>{
+              if(!empresa?.id){addToast('Selecciona empresa','error');return;}
+              setRunning(true);addLog('Parseando XMLs de documentos existentes via CPE...');
+              try{
+                const r=await fetch('/api/sunat/bulk-download',{method:'PUT',headers:H(),body:JSON.stringify({companyId:empresa.id,period:cfg.periodFrom,classifyWithAI:cfg.classifyAI,limit:50})});
+                const d=await r.json();
+                setRunning(false);
+                if(d.ok){
+                  addLog(`✅ Parseados: ${d.data.parsed} | Sin XML: ${d.data.sinXml} | Errores: ${d.data.errors}`,'success' as unknown as boolean);
+                  addToast(`${d.data.parsed} documentos parseados`,'success');
+                  onRefresh();
+                } else {
+                  addLog(`❌ ${d.error}`,false);
+                  addToast(d.error||'Error','error');
+                }
+              }catch(e){setRunning(false);addLog(`❌ ${(e as Error).message}`,false);}
+            }}>
+              ⚙ Parsear XMLs pendientes
+            </Btn>
+          </div>
         </div>
       </div>
     </div>

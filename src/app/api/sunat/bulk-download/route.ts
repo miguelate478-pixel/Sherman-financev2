@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { findCompanyById, findDocumentById, getCredentialByCompany, createBulkJob, createBulkJobPeriod, updateBulkJob, updateBulkJobPeriod, getBulkJobs, createDocument, createDocumentLine, updateDocument, createAuditLog } from '@/lib/db';
+import { findCompanyById, findDocumentById, getCredentialByCompany, createBulkJob, createBulkJobPeriod, updateBulkJob, updateBulkJobPeriod, getBulkJobs, createDocument, createDocumentLine, updateDocument, createAuditLog, getDocuments } from '@/lib/db';
 import { getUser } from '@/lib/auth';
 import { ok, err, unauthorized, getIP } from '@/lib/response';
 import { getSunatProvider, getStoragePath } from '@/lib/providers/sunat';
@@ -310,4 +310,147 @@ export async function GET(req: NextRequest) {
   if (!user) return unauthorized();
   const p = new URL(req.url).searchParams;
   return ok(await getBulkJobs(p.get('companyId')||undefined));
+}
+
+// ─── PUT: Parsear XMLs de documentos existentes via CPE ───────────
+// Toma docs con parserStatus=PENDIENTE de la BD y descarga su XML individual
+export async function PUT(req: NextRequest) {
+  const user = await getUser(req);
+  if (!user) return unauthorized();
+  try {
+    const body = await req.json();
+    const { companyId, period, classifyWithAI, limit = 50 } = body;
+    if (!companyId) return err('companyId requerido');
+
+    const company = await findCompanyById(companyId);
+    if (!company) return err('Empresa no encontrada');
+
+    const cred = await getCredentialByCompany(companyId);
+    if (!cred) return err('Sin credenciales configuradas');
+
+    let solPass = '';
+    let clientId: string | null = null;
+    let clientSecret: string | null = null;
+
+    if (process.env.SUNAT_PROVIDER === 'direct') {
+      solPass  = decrypt(cred.encryptedPass as string, cred.iv as string, cred.authTag as string);
+      clientId = cred.clientId as string | null;
+      if (cred.encClientSecret) {
+        try {
+          const p2 = JSON.parse(cred.encClientSecret as string) as { enc:string; iv:string; tag:string };
+          clientSecret = decrypt(p2.enc, p2.iv, p2.tag);
+        } catch {
+          try { clientSecret = decrypt(cred.encClientSecret as string, cred.iv as string, cred.authTag as string); } catch {}
+        }
+      }
+    }
+
+    if (!clientId || !clientSecret) return err('Client ID y Client Secret requeridos para descarga de XML');
+
+    // Obtener docs pendientes de parseo
+    const filters: Record<string,string> = { companyId };
+    if (period) filters.period = period;
+    const allDocs = await getDocuments(filters);
+    const pendientes = allDocs
+      .filter((d: Record<string,unknown>) => d.parserStatus === 'PENDIENTE' || d.parserStatus === 'ERROR')
+      .slice(0, limit);
+
+    console.log(`[PARSE] Procesando ${pendientes.length} docs pendientes de parseo para ${companyId} ${period||'todos'}`);
+
+    if (pendientes.length === 0) return ok({ parsed: 0, errors: 0, message: 'No hay documentos pendientes de parseo' });
+
+    // Obtener token CPE
+    const cpeToken = await getCpeToken(
+      company.ruc as string,
+      cred.solUser as string,
+      solPass,
+      clientId,
+      clientSecret
+    );
+    console.log('[PARSE] Token CPE obtenido OK');
+
+    const ai = getAiProvider();
+    let parsed = 0, errors = 0, sinXml = 0;
+
+    for (const doc of pendientes as Record<string,unknown>[]) {
+      const docId    = doc.id as string;
+      const serie    = doc.serie as string;
+      const numero   = doc.number as string;
+      const tipo     = doc.docType as string;
+      const op       = doc.operation as string;
+      // Para compras: emisor es el proveedor. Para ventas: emisor es la empresa
+      const rucEmisor = op === 'COMPRA' ? doc.issuerRuc as string : company.ruc as string;
+
+      console.log(`[PARSE] ${docId} — tipo=${tipo} serie=${serie} num=${numero} rucEmisor=${rucEmisor}`);
+
+      try {
+        const cpeResult = await downloadCpeFile(cpeToken, tipo, serie, numero, rucEmisor, 'xml');
+
+        if (!cpeResult.ok || cpeResult.content.length === 0) {
+          console.log(`[PARSE] ${docId}: XML no disponible — ${cpeResult.error}`);
+          sinXml++;
+          await updateDocument(docId, { parserStatus: 'SIN_XML' });
+          continue;
+        }
+
+        const xmlContent = cpeResult.content.toString('utf8');
+        console.log(`[PARSE] ${docId}: XML descargado (${xmlContent.length} bytes)`);
+
+        const { parseXmlUbl } = await import('@/lib/xml-parser');
+        const parsedDoc = await parseXmlUbl(xmlContent);
+        let linesGuardadas = 0;
+
+        for (const line of parsedDoc.lines) {
+          let cl = null;
+          if (classifyWithAI) {
+            try { cl = await ai.classifyLine(line.description, line.lineTotal, tipo); } catch {}
+          }
+          try {
+            await createDocumentLine({
+              id:           `${docId}-L${line.lineNumber}`,
+              documentId:   docId,
+              lineNumber:   line.lineNumber,
+              code:         line.code || '',
+              description:  line.description,
+              quantity:     line.quantity,
+              unit:         line.unit,
+              unitValue:    line.unitValue,
+              igvAmount:    line.igvAmount,
+              lineTotal:    line.lineTotal,
+              affectType:   line.affectType,
+              pcgeAccount:  cl?.pcgeAccount  || null,
+              costCenter:   cl?.costCenter   || null,
+              category:     cl?.category     || null,
+              iaConfidence: cl?.confidence   || 0,
+              needsReview:  cl?.needsReview  || false,
+              isRecurrent:  cl?.isRecurrent  || false,
+            });
+            linesGuardadas++;
+          } catch {}
+        }
+
+        await updateDocument(docId, {
+          hasXml:       true,
+          parserStatus: 'PARSEADO',
+          aiStatus:     classifyWithAI ? 'CLASIFICADO' : 'PENDIENTE',
+        });
+        console.log(`[PARSE] ${docId}: ${linesGuardadas}/${parsedDoc.lines.length} líneas guardadas ✓`);
+        parsed++;
+
+      } catch (e) {
+        console.error(`[PARSE] Error en ${docId}:`, (e as Error).message);
+        await updateDocument(docId, { parserStatus: 'ERROR' });
+        errors++;
+      }
+    }
+
+    await createAuditLog({
+      userId: user.sub, userEmail: user.email, userRole: user.role,
+      action: 'PARSE_XML_DOCS',
+      object: `${companyId} ${period||'todos'} parsed=${parsed} errors=${errors} sinXml=${sinXml}`,
+      ip: getIP(req),
+    });
+
+    return ok({ parsed, errors, sinXml, total: pendientes.length });
+  } catch(e) { return err(`Error: ${(e as Error).message}`, 500); }
 }
