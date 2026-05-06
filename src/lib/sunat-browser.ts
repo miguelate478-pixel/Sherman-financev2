@@ -27,45 +27,13 @@ async function findChromiumExecutable(): Promise<string> {
   const { execSync } = await import('child_process');
   const { existsSync } = await import('fs');
 
-  // 1. Variable de entorno explícita (se puede configurar en Railway)
+  // 1. Variable de entorno explícita (configurada en Dockerfile y Railway)
   if (process.env.CHROMIUM_PATH && existsSync(process.env.CHROMIUM_PATH)) {
     console.log('[BROWSER] Chromium via env CHROMIUM_PATH:', process.env.CHROMIUM_PATH);
     return process.env.CHROMIUM_PATH;
   }
 
-  // 2. Buscar en /nix/store (nixpacks)
-  try {
-    const nixResult = execSync(
-      'find /nix/store -maxdepth 4 -name "chromium" -type f 2>/dev/null | grep -v ".drv" | head -3',
-      { timeout: 8000, encoding: 'utf8' }
-    ).trim();
-    if (nixResult) {
-      const first = nixResult.split('\n')[0].trim();
-      console.log('[BROWSER] Chromium en Nix store:', first);
-      return first;
-    }
-  } catch (e) {
-    console.log('[BROWSER] find /nix/store falló:', (e as Error).message);
-  }
-
-  // 3. which chromium
-  const whichCmds = [
-    'which chromium',
-    'which chromium-browser',
-    'which google-chrome',
-    'which google-chrome-stable',
-  ];
-  for (const cmd of whichCmds) {
-    try {
-      const p = execSync(cmd, { timeout: 3000, encoding: 'utf8' }).trim();
-      if (p && existsSync(p)) {
-        console.log('[BROWSER] Chromium via which:', p);
-        return p;
-      }
-    } catch {}
-  }
-
-  // 4. Rutas fijas comunes
+  // 2. Rutas fijas comunes en Debian/Ubuntu (node:22-slim)
   const fixed = [
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
@@ -83,35 +51,31 @@ async function findChromiumExecutable(): Promise<string> {
     }
   }
 
-  // 5. Listar lo que hay en /nix/store para diagnóstico
-  try {
-    const ls = execSync('ls /nix/store 2>/dev/null | grep -i chrom | head -5', { timeout: 5000, encoding: 'utf8' });
-    console.log('[BROWSER] Paquetes chromium en /nix/store:', ls.trim());
-    // Intentar construir la ruta
-    const pkgs = ls.trim().split('\n').filter(l => l.includes('chromium'));
-    for (const pkg of pkgs) {
-      const candidate = `/nix/store/${pkg.trim()}/bin/chromium`;
-      if (existsSync(candidate)) {
-        console.log('[BROWSER] Chromium construido:', candidate);
-        return candidate;
+  // 3. which
+  const whichCmds = ['which chromium', 'which chromium-browser', 'which google-chrome'];
+  for (const cmd of whichCmds) {
+    try {
+      const p = execSync(cmd, { timeout: 3000, encoding: 'utf8' }).trim();
+      if (p && existsSync(p)) {
+        console.log('[BROWSER] Chromium via which:', p);
+        return p;
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
-  // 6. Buscar recursivo más profundo
+  // 4. Buscar en /nix/store (nixpacks legacy)
   try {
-    const deep = execSync(
-      'find /nix -name "chromium" -type f 2>/dev/null | head -5',
-      { timeout: 10000, encoding: 'utf8' }
+    const nixResult = execSync(
+      'find /nix -name "chromium" -type f 2>/dev/null | grep -v ".drv" | head -1',
+      { timeout: 5000, encoding: 'utf8' }
     ).trim();
-    if (deep) {
-      const first = deep.split('\n')[0].trim();
-      console.log('[BROWSER] Chromium búsqueda profunda:', first);
-      return first;
+    if (nixResult) {
+      console.log('[BROWSER] Chromium en Nix:', nixResult);
+      return nixResult;
     }
   } catch {}
 
-  throw new Error('Chromium no encontrado. Verifica que nixpacks.toml incluye "chromium"');
+  throw new Error('Chromium no encontrado. Configura CHROMIUM_PATH o usa el Dockerfile incluido.');
 }
 
 // ── Lanzar browser ──────────────────────────────────────────────────
