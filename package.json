@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
-    "start": "node scripts/init-postgres.js && node scripts/seed-postgres.js && next start",
+    "start": "node scripts/init-postgres.js && node scripts/seed-postgres.js && next start -p ${PORT:-8080} -H 0.0.0.0",
     "db:seed": "node --experimental-sqlite scripts/seed-db.js",
     "db:reset": "node --experimental-sqlite scripts/init-db.js && node --experimental-sqlite scripts/seed-db.js",
     "setup": "npm install && npm run db:init && npm run db:seed && echo \"\n✅ Listo! Ejecuta: npm run dev\"",
