@@ -345,13 +345,12 @@ async function solicitarPropuesta(ruc: string, periodo: string, tipo: 'RVIE'|'RC
 
 /** Polling hasta que el ticket esté listo. Devuelve nombre del archivo ZIP */
 async function esperarTicket(ticket: string, periodo: string, tipo: 'RVIE'|'RCE', token: string, maxIntentos = 60, intervaloMs = 5000): Promise<string> {
-  // FIX 2: endpoints de polling distintos para RCE y RVIE
-  const url = tipo === 'RCE'
-    ? `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`
-      + `?perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${ticket}&codLibro=080000&codOrigenEnvio=2`
-    : `${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/consultaestadoticket?numTicket=${ticket}`;
+  // RCE: codLibro=080000 | RVIE: codLibro=140000 — mismo endpoint /rvierce/
+  const codLibro = tipo === 'RCE' ? '080000' : '140000';
+  const url = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`
+    + `?perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${ticket}&codLibro=${codLibro}&codOrigenEnvio=2`;
 
-  console.log(`[POLLING] URL polling ${tipo}: ${url}`);
+  console.log(`[POLLING] URL polling ${tipo} (codLibro=${codLibro}): ${url}`);
 
   for (let i = 1; i <= maxIntentos; i++) {
     console.log(`[POLLING] Intento ${i}/${maxIntentos} ticket: ${ticket} tipo: ${tipo}`);
@@ -401,22 +400,40 @@ async function esperarTicket(ticket: string, periodo: string, tipo: 'RVIE'|'RCE'
 
 /** Descarga el ZIP y devuelve su contenido como Buffer */
 async function descargarZip(nomArchivo: string, periodo: string, tipo: 'RVIE'|'RCE', token: string): Promise<Buffer> {
-  // FIX 1: URL de descarga diferente para RCE vs RVIE
-  const url = tipo === 'RCE'
-    ? `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/descargaarchivo?nomArchivoReporte=${encodeURIComponent(nomArchivo)}`
-    : `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=080000`;
-  console.log(`[POLLING] Descargando ZIP ${tipo}: ${url}`);
-  const res = await fetch(url, {
-    headers: { ...sireHeaders(token), Accept: 'application/zip, application/octet-stream, */*' },
-    signal: AbortSignal.timeout(60000),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Descarga ZIP ${tipo} HTTP ${res.status}: ${body.substring(0,300)}`);
+  // Intentar URLs en orden hasta que una funcione
+  const urls = tipo === 'RCE'
+    ? [
+        `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/descargaarchivo?nomArchivoReporte=${encodeURIComponent(nomArchivo)}`,
+        `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/exportacioncomprobantepropuesta/descarga?nomArchivoReporte=${encodeURIComponent(nomArchivo)}`,
+        `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=080000`,
+      ]
+    : [
+        `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=140000`,
+        `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=080000`,
+      ];
+
+  const dlHeaders = {
+    ...sireHeaders(token),
+    'Accept': 'application/octet-stream, application/zip, */*',
+  };
+
+  for (const url of urls) {
+    console.log(`[POLLING] Intentando descarga ZIP ${tipo}: ${url}`);
+    try {
+      const res = await fetch(url, { headers: dlHeaders, signal: AbortSignal.timeout(60000) });
+      if (!res.ok) {
+        const body = await res.text();
+        console.log(`[POLLING] HTTP ${res.status} en ${url}: ${body.substring(0, 200)}`);
+        continue;
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      console.log(`[POLLING] ZIP ${tipo} descargado OK: ${buf.length} bytes desde ${url}`);
+      return buf;
+    } catch (e) {
+      console.log(`[POLLING] Error en ${url}: ${(e as Error).message}`);
+    }
   }
-  const buf = Buffer.from(await res.arrayBuffer());
-  console.log(`[POLLING] ZIP ${tipo} descargado: ${buf.length} bytes`);
-  return buf;
+  throw new Error(`No se pudo descargar ZIP ${tipo} — todos los endpoints fallaron`);
 }
 
 /** Extrae XMLs del ZIP y devuelve mapa { nombreArchivo: contenidoXml } */
