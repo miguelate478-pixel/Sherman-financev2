@@ -344,12 +344,17 @@ async function solicitarPropuesta(ruc: string, periodo: string, tipo: 'RVIE'|'RC
 }
 
 /** Polling hasta que el ticket esté listo. Devuelve nombre del archivo ZIP */
-async function esperarTicket(ticket: string, periodo: string, token: string, maxIntentos = 60, intervaloMs = 5000): Promise<string> {
-  const url = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`
-    + `?perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${ticket}&codLibro=080000&codOrigenEnvio=2`;
+async function esperarTicket(ticket: string, periodo: string, tipo: 'RVIE'|'RCE', token: string, maxIntentos = 60, intervaloMs = 5000): Promise<string> {
+  // FIX 2: endpoints de polling distintos para RCE y RVIE
+  const url = tipo === 'RCE'
+    ? `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`
+      + `?perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${ticket}&codLibro=080000&codOrigenEnvio=2`
+    : `${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/consultaestadoticket?numTicket=${ticket}`;
+
+  console.log(`[POLLING] URL polling ${tipo}: ${url}`);
 
   for (let i = 1; i <= maxIntentos; i++) {
-    console.log(`[POLLING] Intento ${i}/${maxIntentos} ticket: ${ticket}`);
+    console.log(`[POLLING] Intento ${i}/${maxIntentos} ticket: ${ticket} tipo: ${tipo}`);
     await new Promise(r => setTimeout(r, intervaloMs));
 
     try {
@@ -364,7 +369,7 @@ async function esperarTicket(ticket: string, periodo: string, token: string, max
       let data: Record<string,unknown>;
       try { data = JSON.parse(raw); } catch { continue; }
 
-      // Buscar en registros o en raíz
+      // Buscar en registros o en raíz (estructura varía entre RCE y RVIE)
       const registros = (data.registros as Record<string,unknown>[]) ?? [data];
       const reg = registros.find(r => String(r.numTicket) === ticket) ?? registros[0];
       if (!reg) continue;
@@ -374,6 +379,7 @@ async function esperarTicket(ticket: string, periodo: string, token: string, max
       const nomArchivo = String(
         detalle?.nomArchivoReporte
         ?? (reg.archivoReporte as Record<string,unknown>[])?.[0]?.nomArchivoReporte
+        ?? reg.nomArchivoReporte
         ?? ''
       );
 
@@ -394,20 +400,22 @@ async function esperarTicket(ticket: string, periodo: string, token: string, max
 }
 
 /** Descarga el ZIP y devuelve su contenido como Buffer */
-async function descargarZip(nomArchivo: string, token: string): Promise<Buffer> {
-  const url = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte`
-    + `?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=080000`;
-  console.log(`[POLLING] Descargando ZIP: ${url}`);
+async function descargarZip(nomArchivo: string, periodo: string, tipo: 'RVIE'|'RCE', token: string): Promise<Buffer> {
+  // FIX 1: URL de descarga diferente para RCE vs RVIE
+  const url = tipo === 'RCE'
+    ? `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/descargaarchivo?nomArchivoReporte=${encodeURIComponent(nomArchivo)}`
+    : `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=080000`;
+  console.log(`[POLLING] Descargando ZIP ${tipo}: ${url}`);
   const res = await fetch(url, {
     headers: { ...sireHeaders(token), Accept: 'application/zip, application/octet-stream, */*' },
     signal: AbortSignal.timeout(60000),
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Descarga ZIP HTTP ${res.status}: ${body.substring(0,300)}`);
+    throw new Error(`Descarga ZIP ${tipo} HTTP ${res.status}: ${body.substring(0,300)}`);
   }
   const buf = Buffer.from(await res.arrayBuffer());
-  console.log(`[POLLING] ZIP descargado: ${buf.length} bytes`);
+  console.log(`[POLLING] ZIP ${tipo} descargado: ${buf.length} bytes`);
   return buf;
 }
 
@@ -553,8 +561,8 @@ export async function PUT(req: NextRequest) {
       try {
         console.log(`[PARSE] Solicitando ZIP RCE para ${periodo}...`);
         const ticketRce = await solicitarPropuesta(company.ruc as string, periodo, 'RCE', sireToken);
-        const nomArchivoRce = await esperarTicket(ticketRce, periodo, sireToken);
-        const zipRce = await descargarZip(nomArchivoRce, sireToken);
+        const nomArchivoRce = await esperarTicket(ticketRce, periodo, 'RCE', sireToken);
+        const zipRce = await descargarZip(nomArchivoRce, periodo, 'RCE', sireToken);
         const xmlsRce = extraerXmlsDeZip(zipRce);
         console.log(`[PARSE] ZIP RCE: ${xmlsRce.size} XMLs extraídos`);
         await procesarXmls(xmlsRce, compras);
@@ -581,8 +589,8 @@ export async function PUT(req: NextRequest) {
       try {
         console.log(`[PARSE] Solicitando ZIP RVIE para ${periodo}...`);
         const ticketRvie = await solicitarPropuesta(company.ruc as string, periodo, 'RVIE', sireToken);
-        const nomArchivoRvie = await esperarTicket(ticketRvie, periodo, sireToken);
-        const zipRvie = await descargarZip(nomArchivoRvie, sireToken);
+        const nomArchivoRvie = await esperarTicket(ticketRvie, periodo, 'RVIE', sireToken);
+        const zipRvie = await descargarZip(nomArchivoRvie, periodo, 'RVIE', sireToken);
         const xmlsRvie = extraerXmlsDeZip(zipRvie);
         console.log(`[PARSE] ZIP RVIE: ${xmlsRvie.size} XMLs extraídos`);
         await procesarXmls(xmlsRvie, ventas);
