@@ -537,12 +537,12 @@ export async function PUT(req: NextRequest) {
     const pendientes = (allDocs as Record<string,unknown>[]).filter(
       d => d.parserStatus === 'PENDIENTE' || d.parserStatus === 'ERROR' || d.parserStatus === 'SIN_XML'
     );
-    console.log(`[PARSE] ${pendientes.length} docs pendientes en ${period}`);
+    console.log(`[PARSE] v3 — ${pendientes.length} docs pendientes en ${period}`);
     if (pendientes.length === 0) return ok({ parsed: 0, errors: 0, sinXml: 0, total: 0, message: 'No hay documentos pendientes' });
 
     const compras = pendientes.filter(d => d.operation === 'COMPRA');
     const ventas  = pendientes.filter(d => d.operation === 'VENTA');
-    console.log(`[PARSE] Compras pendientes: ${compras.length} | Ventas pendientes: ${ventas.length}`);
+    console.log(`[PARSE] v3 — Compras: ${compras.length} (SIN_XML) | Ventas: ${ventas.length} (CPE API)`);
 
     const ai = getAiProvider();
     const { parseXmlUbl } = await import('@/lib/xml-parser');
