@@ -42,4 +42,7 @@ RUN npm prune --omit=dev
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "node scripts/init-postgres.js && node scripts/seed-postgres.js && npm start"]
+ENV PORT=8080
+ENV HOSTNAME=0.0.0.0
+
+CMD ["sh", "-c", "node scripts/init-postgres.js && node scripts/seed-postgres.js && node_modules/.bin/next start -p 8080 -H 0.0.0.0"]
