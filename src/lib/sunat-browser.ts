@@ -25,45 +25,91 @@ export interface BrowserDownloadOptions {
 // ── Encontrar el ejecutable de Chromium disponible ──────────────────
 async function findChromiumExecutable(): Promise<string> {
   const { execSync } = await import('child_process');
-  const candidates = [
-    // Nix (Railway con nixpacks)
-    '/nix/store',
-    // Rutas comunes en Linux
+  const { existsSync } = await import('fs');
+
+  // 1. Variable de entorno explícita (se puede configurar en Railway)
+  if (process.env.CHROMIUM_PATH && existsSync(process.env.CHROMIUM_PATH)) {
+    console.log('[BROWSER] Chromium via env CHROMIUM_PATH:', process.env.CHROMIUM_PATH);
+    return process.env.CHROMIUM_PATH;
+  }
+
+  // 2. Buscar en /nix/store (nixpacks)
+  try {
+    const nixResult = execSync(
+      'find /nix/store -maxdepth 4 -name "chromium" -type f 2>/dev/null | grep -v ".drv" | head -3',
+      { timeout: 8000, encoding: 'utf8' }
+    ).trim();
+    if (nixResult) {
+      const first = nixResult.split('\n')[0].trim();
+      console.log('[BROWSER] Chromium en Nix store:', first);
+      return first;
+    }
+  } catch (e) {
+    console.log('[BROWSER] find /nix/store falló:', (e as Error).message);
+  }
+
+  // 3. which chromium
+  const whichCmds = [
+    'which chromium',
+    'which chromium-browser',
+    'which google-chrome',
+    'which google-chrome-stable',
+  ];
+  for (const cmd of whichCmds) {
+    try {
+      const p = execSync(cmd, { timeout: 3000, encoding: 'utf8' }).trim();
+      if (p && existsSync(p)) {
+        console.log('[BROWSER] Chromium via which:', p);
+        return p;
+      }
+    } catch {}
+  }
+
+  // 4. Rutas fijas comunes
+  const fixed = [
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable',
+    '/usr/local/bin/chromium',
     '/snap/bin/chromium',
+    '/opt/google/chrome/chrome',
+    '/opt/chromium/chromium',
   ];
-
-  // Buscar en /nix/store (nixpacks instala chromium aquí)
-  try {
-    const nixChrome = execSync('find /nix/store -name "chromium" -type f 2>/dev/null | head -1', { timeout: 5000 })
-      .toString().trim();
-    if (nixChrome) {
-      console.log('[BROWSER] Chromium encontrado en Nix:', nixChrome);
-      return nixChrome;
-    }
-  } catch {}
-
-  // Buscar via which
-  try {
-    const which = execSync('which chromium chromium-browser google-chrome 2>/dev/null | head -1', { timeout: 3000 })
-      .toString().trim();
-    if (which) {
-      console.log('[BROWSER] Chromium encontrado via which:', which);
-      return which;
-    }
-  } catch {}
-
-  // Probar candidatos directamente
-  const { existsSync } = await import('fs');
-  for (const path of candidates) {
-    if (!path.includes('/nix/store') && existsSync(path)) {
-      console.log('[BROWSER] Chromium encontrado:', path);
-      return path;
+  for (const p of fixed) {
+    if (existsSync(p)) {
+      console.log('[BROWSER] Chromium en ruta fija:', p);
+      return p;
     }
   }
+
+  // 5. Listar lo que hay en /nix/store para diagnóstico
+  try {
+    const ls = execSync('ls /nix/store 2>/dev/null | grep -i chrom | head -5', { timeout: 5000, encoding: 'utf8' });
+    console.log('[BROWSER] Paquetes chromium en /nix/store:', ls.trim());
+    // Intentar construir la ruta
+    const pkgs = ls.trim().split('\n').filter(l => l.includes('chromium'));
+    for (const pkg of pkgs) {
+      const candidate = `/nix/store/${pkg.trim()}/bin/chromium`;
+      if (existsSync(candidate)) {
+        console.log('[BROWSER] Chromium construido:', candidate);
+        return candidate;
+      }
+    }
+  } catch {}
+
+  // 6. Buscar recursivo más profundo
+  try {
+    const deep = execSync(
+      'find /nix -name "chromium" -type f 2>/dev/null | head -5',
+      { timeout: 10000, encoding: 'utf8' }
+    ).trim();
+    if (deep) {
+      const first = deep.split('\n')[0].trim();
+      console.log('[BROWSER] Chromium búsqueda profunda:', first);
+      return first;
+    }
+  } catch {}
 
   throw new Error('Chromium no encontrado. Verifica que nixpacks.toml incluye "chromium"');
 }
