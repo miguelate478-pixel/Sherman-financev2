@@ -144,7 +144,13 @@ export async function POST(req: NextRequest) {
           for (const doc of result.documents) {
             const docId=`${doc.serie}-${doc.numero}-${period}`;
             const existing = await findDocumentById(docId);
-            if(existing) continue;
+            // Si ya existe Y no necesitamos extraer líneas, saltar
+            if(existing && !includeDetails) continue;
+            // Si ya existe Y necesitamos líneas Y ya tiene líneas, saltar
+            if(existing && includeDetails && (existing.parserStatus === 'PARSEADO' || existing.parserStatus === 'CLASIFICADO')) {
+              console.log(`[BULK] ${docId}: ya parseado (${existing.parserStatus}), saltando`);
+              continue;
+            }
 
             const storePath=getStoragePath(company.ruc as string,period,op,doc.tipo,`${doc.serie}-${doc.numero}`);
             let xmlContent:string|undefined,hasXml=false,hasPdf=false,hasCdr=false,xmlPath='',pdfPath='',cdrPath='',docHash='';
@@ -155,38 +161,42 @@ export async function POST(req: NextRequest) {
 
             const base = doc.biGravadaDG !== undefined ? doc.biGravadaDG : (Math.abs(doc.total)/1.18);
             const igv  = doc.igvDG !== undefined ? doc.igvDG : (Math.abs(doc.total) - base);
-            // Para VENTAS: el cliente viene en numDocCliente/razonSocialCliente (campos reales SUNAT)
-            // Para COMPRAS: el proveedor viene en rucEmisor/rsEmisor
             const receiverRuc = op==='VENTAS'
               ? (doc.numDocCliente || doc.rucReceptor || '')
               : doc.rucReceptor;
             const receiverName = op==='VENTAS'
               ? (doc.razonSocialCliente || doc.rsReceptor || '')
               : doc.rsReceptor;
-            try {
-              console.log('[BULK] Guardando doc:', docId, 'companyId:', companyId, 'periodo:', period);
-              await createDocument({
-                id:docId, companyId, bulkJobId:jobId,
-                operation: op==='COMPRAS'?'COMPRA':'VENTA',
-                docType: doc.tipo, serie: doc.serie, number: doc.numero,
-                issuerRuc: doc.rucEmisor, issuerName: doc.rsEmisor,
-                receiverRuc, receiverName,
-                issueDate: doc.fecha,
-                dueDate: doc.fecVencPag || null,
-                currency: doc.moneda,
-                base: parseFloat(base.toFixed(2)),
-                igv: parseFloat(igv.toFixed(2)),
-                total: doc.total,
-                sunatStatus: doc.sunatStatus, cdrStatus: doc.cdrStatus,
-                hasXml, hasPdf, hasCdr, xmlPath, pdfPath, cdrPath, hashSha256: docHash,
-                period, workflow:'PENDIENTE_REVISION', concarStatus:'PENDIENTE',
-                parserStatus:'PENDIENTE', aiStatus:'PENDIENTE',
-              });
-              console.log('[BULK] Doc guardado OK:', docId);
-            } catch (dbError) {
-              console.error(`[BULK_DOWNLOAD] Failed to save document ${docId}:`, dbError);
-              periodErrors++;
-              continue;
+
+            // Solo crear documento si no existe
+            if (!existing) {
+              try {
+                console.log('[BULK] Guardando doc:', docId, 'companyId:', companyId, 'periodo:', period);
+                await createDocument({
+                  id:docId, companyId, bulkJobId:jobId,
+                  operation: op==='COMPRAS'?'COMPRA':'VENTA',
+                  docType: doc.tipo, serie: doc.serie, number: doc.numero,
+                  issuerRuc: doc.rucEmisor, issuerName: doc.rsEmisor,
+                  receiverRuc, receiverName,
+                  issueDate: doc.fecha,
+                  dueDate: doc.fecVencPag || null,
+                  currency: doc.moneda,
+                  base: parseFloat(base.toFixed(2)),
+                  igv: parseFloat(igv.toFixed(2)),
+                  total: doc.total,
+                  sunatStatus: doc.sunatStatus, cdrStatus: doc.cdrStatus,
+                  hasXml, hasPdf, hasCdr, xmlPath, pdfPath, cdrPath, hashSha256: docHash,
+                  period, workflow:'PENDIENTE_REVISION', concarStatus:'PENDIENTE',
+                  parserStatus:'PENDIENTE', aiStatus:'PENDIENTE',
+                });
+                console.log('[BULK] Doc guardado OK:', docId);
+              } catch (dbError) {
+                console.error(`[BULK_DOWNLOAD] Failed to save document ${docId}:`, dbError);
+                periodErrors++;
+                continue;
+              }
+            } else {
+              console.log(`[BULK] ${docId}: doc existente, procesando líneas`);
             }
 
             // ── Extraer líneas del XML ──────────────────────────────
