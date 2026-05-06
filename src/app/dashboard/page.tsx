@@ -216,12 +216,14 @@ function LinePanel({doc,onClose,addToast}:{doc:Doc;onClose:()=>void;addToast:(m:
         </div>
 
         {lineas.length === 0 ? (
-          <div style={{background:C.amberL,border:`1px solid ${C.amberM}`,borderRadius:10,padding:'1.25rem',textAlign:'center'}}>
-            <div style={{fontSize:24,marginBottom:8}}>📄</div>
-            <div style={{fontWeight:700,color:C.amber,marginBottom:4}}>Sin líneas disponibles</div>
-            <div style={{fontSize:12,color:C.t3,lineHeight:1.6}}>
-              Las líneas se generan cuando se descarga el XML del comprobante.<br/>
-              Para obtenerlas, ejecuta una descarga masiva con <strong>"Extraer líneas del XML"</strong> activado.
+          <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.5rem',textAlign:'center'}}>
+            <div style={{fontSize:28,marginBottom:8}}>📋</div>
+            <div style={{fontWeight:700,color:C.t2,marginBottom:8}}>Sin líneas de detalle</div>
+            <div style={{fontSize:12,color:C.t3,lineHeight:1.8,maxWidth:380,margin:'0 auto'}}>
+              La API de SUNAT no expone el XML individual de los comprobantes.<br/>
+              Las líneas solo están disponibles si la empresa tiene los XMLs originales.<br/><br/>
+              <strong style={{color:C.t2}}>Los datos disponibles son:</strong><br/>
+              Emisor · Receptor · Fecha · Base imponible · IGV · Total · Moneda
             </div>
           </div>
         ) : (
@@ -1145,14 +1147,18 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
           <div style={{marginTop:8}}>
             <Btn color="teal" full disabled={running} onClick={async()=>{
               if(!empresa?.id){addToast('Selecciona empresa','error');return;}
-              setRunning(true);addLog('Parseando XMLs de documentos existentes via CPE...');
+              setRunning(true);addLog('Intentando parsear XMLs via API CPE (solo ventas emitidas)...');
               try{
                 const r=await fetch('/api/sunat/bulk-download',{method:'PUT',headers:H(),body:JSON.stringify({companyId:empresa.id,period:cfg.periodFrom,classifyWithAI:cfg.classifyAI,limit:50})});
                 const d=await r.json();
                 setRunning(false);
                 if(d.ok){
-                  addLog(`✅ Parseados: ${d.data.parsed} | Sin XML: ${d.data.sinXml} | Errores: ${d.data.errors}`,'success' as unknown as boolean);
-                  addToast(`${d.data.parsed} documentos parseados`,'success');
+                  const msg = d.data.parsed > 0
+                    ? `✅ ${d.data.parsed} docs parseados con líneas`
+                    : `ℹ Sin XMLs disponibles (API SUNAT no expone XMLs de comprobantes recibidos)`;
+                  addLog(msg, d.data.parsed > 0);
+                  if(d.data.parsed > 0) addToast(`${d.data.parsed} documentos parseados`,'success');
+                  else addToast('Sin XMLs disponibles via API SUNAT','info');
                   onRefresh();
                 } else {
                   addLog(`❌ ${d.error}`,false);
@@ -1160,8 +1166,11 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
                 }
               }catch(e){setRunning(false);addLog(`❌ ${(e as Error).message}`,false);}
             }}>
-              ⚙ Parsear XMLs pendientes
+              ⚙ Parsear XMLs (via API CPE)
             </Btn>
+            <div style={{fontSize:10,color:C.t4,marginTop:4,lineHeight:1.4}}>
+              Solo disponible para comprobantes emitidos por la empresa via sistema electrónico SUNAT
+            </div>
           </div>
         </div>
       </div>
