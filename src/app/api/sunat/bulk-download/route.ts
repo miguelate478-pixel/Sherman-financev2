@@ -84,9 +84,22 @@ export async function POST(req: NextRequest) {
         try {
           const p = JSON.parse(cred.encClientSecret as string) as { enc:string; iv:string; tag:string };
           clientSecret = decrypt(p.enc, p.iv, p.tag);
-        } catch {}
+          console.log('[BULK] clientSecret desencriptado OK, longitud:', clientSecret.length);
+        } catch (e1) {
+          console.error('[BULK] Error JSON.parse encClientSecret:', (e1 as Error).message);
+          // Intentar formato legacy (encriptado directo sin JSON wrapper)
+          try {
+            clientSecret = decrypt(cred.encClientSecret as string, cred.iv as string, cred.authTag as string);
+            console.log('[BULK] clientSecret legacy desencriptado OK, longitud:', clientSecret.length);
+          } catch (e2) {
+            console.error('[BULK] Error decrypt legacy encClientSecret:', (e2 as Error).message);
+          }
+        }
+      } else {
+        console.log('[BULK] encClientSecret no existe en BD para companyId:', companyId);
       }
     }
+    console.log('[BULK] Estado credenciales — clientId:', !!clientId, '| clientSecret:', !!clientSecret, '| solPass len:', solPass.length);
 
     const periods = getPeriods(periodFrom, periodTo);
     const ops = operation==='BOTH'?['COMPRAS','VENTAS']:[operation==='PURCHASES'?'COMPRAS':'VENTAS'];
@@ -182,6 +195,7 @@ export async function POST(req: NextRequest) {
               let xmlForLines: string | undefined = xmlContent;
 
               // 2. Si no hay XML de SIRE, intentar descarga individual vía API CPE
+              console.log(`[BULK] includeDetails para ${docId} — xmlContent:${!!xmlContent} clientId:${!!clientId} clientSecret:${!!clientSecret}`);
               if (!xmlForLines && clientId && clientSecret) {
                 try {
                   const cpeToken = await getCpeToken(
