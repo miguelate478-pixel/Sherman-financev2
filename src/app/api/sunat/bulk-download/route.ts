@@ -595,54 +595,87 @@ export async function PUT(req: NextRequest) {
       }
     };
 
-    // ── COMPRAS: ZIP via RCE propuesta ───────────────────────────────
+    // ── COMPRAS: XMLs NO disponibles via SIRE API ───────────────────
+    // SUNAT no expone XMLs de comprobantes recibidos al receptor.
+    // El ZIP de propuesta RCE contiene un TXT de resumen, no XMLs individuales.
     if (compras.length > 0) {
+      console.log(`[PARSE] COMPRAS: ${compras.length} docs — XMLs de compras recibidas no disponibles via API SUNAT`);
+      for (const doc of compras as Record<string,unknown>[]) {
+        await updateDocument(doc.id as string, { parserStatus: 'SIN_XML' });
+        sinXml++;
+      }
+    }
+
+    // ── VENTAS: XMLs via CPE API (comprobantes que nosotros emitimos) ─
+    if (ventas.length > 0) {
       try {
-        console.log(`[PARSE] Solicitando ZIP RCE para ${periodo}...`);
-        const ticketRce = await solicitarPropuesta(company.ruc as string, periodo, 'RCE', sireToken);
-        const resultRce = await esperarTicket(ticketRce, periodo, 'RCE', sireToken);
-        const zipRce = await descargarZip(resultRce, periodo, 'RCE', sireToken);
-        const xmlsRce = extraerXmlsDeZip(zipRce);
-        console.log(`[PARSE] ZIP RCE: ${xmlsRce.size} XMLs extraídos`);
-        await procesarXmls(xmlsRce, compras);
-        // Marcar como SIN_XML los que no tuvieron match
-        for (const doc of compras) {
-          const d = doc as Record<string,unknown>;
-          if (d.parserStatus === 'PENDIENTE' || d.parserStatus === 'ERROR' || d.parserStatus === 'SIN_XML') {
-            // Refrescar estado
-            const fresh = await findDocumentById(d.id as string);
-            if (fresh && fresh.parserStatus !== 'PARSEADO') {
-              sinXml++;
-              await updateDocument(d.id as string, { parserStatus: 'SIN_XML' });
+        if (!clientId || !clientSecret) {
+          console.log('[PARSE] Sin clientId/clientSecret para CPE API');
+          for (const doc of ventas as Record<string,unknown>[]) {
+            await updateDocument(doc.id as string, { parserStatus: 'SIN_XML' });
+            sinXml++;
+          }
+        } else {
+          const cpeToken = await getCpeToken(
+            company.ruc as string, cred.solUser as string, solPass, clientId, clientSecret
+          );
+          console.log(`[PARSE] Token CPE OK — procesando ${ventas.length} ventas`);
+
+          for (const doc of ventas as Record<string,unknown>[]) {
+            const docId    = doc.id as string;
+            const serie    = doc.serie as string;
+            const numero   = doc.number as string;
+            const tipo     = doc.docType as string;
+            const rucEmisor = company.ruc as string; // ventas: emisor = la empresa
+
+            console.log(`[PARSE] Venta ${docId} — CPE ${tipo}/${serie}/${numero}/${rucEmisor}`);
+            try {
+              const cpeResult = await downloadCpeFile(cpeToken, tipo, serie, numero, rucEmisor, 'xml');
+              if (!cpeResult.ok || cpeResult.content.length === 0) {
+                console.log(`[PARSE] ${docId}: XML CPE no disponible — ${cpeResult.error}`);
+                sinXml++;
+                await updateDocument(docId, { parserStatus: 'SIN_XML' });
+                continue;
+              }
+              const xmlContent = cpeResult.content.toString('utf8');
+              const { parseXmlUbl } = await import('@/lib/xml-parser');
+              const parsedDoc = await parseXmlUbl(xmlContent);
+              let linesGuardadas = 0;
+              for (const line of parsedDoc.lines) {
+                let cl = null;
+                if (classifyWithAI) {
+                  try { cl = await ai.classifyLine(line.description, line.lineTotal, tipo); } catch {}
+                }
+                try {
+                  await createDocumentLine({
+                    id: `${docId}-L${line.lineNumber}`, documentId: docId,
+                    lineNumber: line.lineNumber, code: line.code || '',
+                    description: line.description, quantity: line.quantity,
+                    unit: line.unit, unitValue: line.unitValue,
+                    igvAmount: line.igvAmount, lineTotal: line.lineTotal,
+                    affectType: line.affectType,
+                    pcgeAccount: cl?.pcgeAccount || null, costCenter: cl?.costCenter || null,
+                    category: cl?.category || null, iaConfidence: cl?.confidence || 0,
+                    needsReview: cl?.needsReview || false, isRecurrent: cl?.isRecurrent || false,
+                  });
+                  linesGuardadas++;
+                } catch {}
+              }
+              await updateDocument(docId, {
+                hasXml: true, parserStatus: 'PARSEADO',
+                aiStatus: classifyWithAI ? 'CLASIFICADO' : 'PENDIENTE',
+              });
+              console.log(`[PARSE] ${docId}: ${linesGuardadas}/${parsedDoc.lines.length} líneas guardadas ✓`);
+              parsed++;
+            } catch (e) {
+              console.error(`[PARSE] Error en ${docId}:`, (e as Error).message);
+              await updateDocument(docId, { parserStatus: 'ERROR' });
+              errors++;
             }
           }
         }
       } catch (e) {
-        console.error('[PARSE] Error procesando ZIP RCE:', (e as Error).message);
-        errors += compras.length;
-      }
-    }
-
-    // ── VENTAS: ZIP via RVIE propuesta ───────────────────────────────
-    if (ventas.length > 0) {
-      try {
-        console.log(`[PARSE] Solicitando ZIP RVIE para ${periodo}...`);
-        const ticketRvie = await solicitarPropuesta(company.ruc as string, periodo, 'RVIE', sireToken);
-        const resultRvie = await esperarTicket(ticketRvie, periodo, 'RVIE', sireToken);
-        const zipRvie = await descargarZip(resultRvie, periodo, 'RVIE', sireToken);
-        const xmlsRvie = extraerXmlsDeZip(zipRvie);
-        console.log(`[PARSE] ZIP RVIE: ${xmlsRvie.size} XMLs extraídos`);
-        await procesarXmls(xmlsRvie, ventas);
-        for (const doc of ventas) {
-          const d = doc as Record<string,unknown>;
-          const fresh = await findDocumentById(d.id as string);
-          if (fresh && fresh.parserStatus !== 'PARSEADO') {
-            sinXml++;
-            await updateDocument(d.id as string, { parserStatus: 'SIN_XML' });
-          }
-        }
-      } catch (e) {
-        console.error('[PARSE] Error procesando ZIP RVIE:', (e as Error).message);
+        console.error('[PARSE] Error procesando ventas via CPE:', (e as Error).message);
         errors += ventas.length;
       }
     }
