@@ -676,6 +676,10 @@ export async function PUT(req: NextRequest) {
         }
       } catch (e) {
         console.error('[PARSE] Error procesando ventas via CPE:', (e as Error).message);
+        console.error('[PARSE] Stack ventas:', (e as Error).stack?.split('\n').slice(0,3).join(' | '));
+        for (const doc of ventas as Record<string,unknown>[]) {
+          await updateDocument(doc.id as string, { parserStatus: 'ERROR' });
+        }
         errors += ventas.length;
       }
     }
