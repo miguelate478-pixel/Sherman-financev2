@@ -344,8 +344,16 @@ async function solicitarPropuesta(ruc: string, periodo: string, tipo: 'RVIE'|'RC
 }
 
 /** Polling hasta que el ticket esté listo. Devuelve nombre del archivo ZIP */
-async function esperarTicket(ticket: string, periodo: string, tipo: 'RVIE'|'RCE', token: string, maxIntentos = 60, intervaloMs = 5000): Promise<string> {
-  // RCE: codLibro=080000 | RVIE: codLibro=140000 — mismo endpoint /rvierce/
+// Datos que devuelve el polling cuando el ticket está listo
+interface TicketResult {
+  nomArchivo: string;
+  codTipoArchivo: string;
+  codProceso: string;
+  ticket: string;
+}
+
+async function esperarTicket(ticket: string, periodo: string, tipo: 'RVIE'|'RCE', token: string, maxIntentos = 60, intervaloMs = 5000): Promise<TicketResult> {
+  // Manual SIRE v25 sección 5.31 — mismo endpoint para RCE y RVIE, distinto codLibro
   const codLibro = tipo === 'RCE' ? '080000' : '140000';
   const url = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets`
     + `?perIni=${periodo}&perFin=${periodo}&page=1&perPage=20&numTicket=${ticket}&codLibro=${codLibro}&codOrigenEnvio=2`;
@@ -363,74 +371,87 @@ async function esperarTicket(ticket: string, periodo: string, tipo: 'RVIE'|'RCE'
         continue;
       }
       const raw = await res.text();
-      console.log(`[POLLING] Respuesta intento ${i}: ${raw.substring(0, 400)}`);
+      console.log(`[POLLING] Respuesta intento ${i}: ${raw.substring(0, 500)}`);
 
       let data: Record<string,unknown>;
       try { data = JSON.parse(raw); } catch { continue; }
 
-      // Buscar en registros o en raíz (estructura varía entre RCE y RVIE)
       const registros = (data.registros as Record<string,unknown>[]) ?? [data];
       const reg = registros.find(r => String(r.numTicket) === ticket) ?? registros[0];
-      if (!reg) continue;
+      if (!reg) { console.log(`[POLLING] Sin registro para ticket ${ticket}`); continue; }
 
-      const codEstado = String(reg.codEstadoProceso ?? reg.codEstado ?? '');
-      const detalle   = reg.detalleTicket as Record<string,unknown> | undefined;
+      // Manual v25 sección 5.31: campo codProceso, valores 3=listo con archivo, 4=listo sin errores
+      // También soportar codEstadoProceso='06' como fallback (versiones anteriores)
+      const codProceso    = String(reg.codProceso ?? '');
+      const codEstadoProc = String(reg.codEstadoProceso ?? reg.codEstado ?? '');
+      const archivoArr    = reg.archivoReporte as Record<string,unknown>[] | undefined;
+      const detalle       = reg.detalleTicket as Record<string,unknown> | undefined;
+
       const nomArchivo = String(
-        detalle?.nomArchivoReporte
-        ?? (reg.archivoReporte as Record<string,unknown>[])?.[0]?.nomArchivoReporte
+        archivoArr?.[0]?.nomArchivoReporte
+        ?? detalle?.nomArchivoReporte
         ?? reg.nomArchivoReporte
         ?? ''
       );
+      const codTipoArchivo = String(archivoArr?.[0]?.codTipoArchivoReporte ?? '');
 
-      console.log(`[POLLING] codEstado=${codEstado} archivo=${nomArchivo}`);
+      console.log(`[POLLING] codProceso=${codProceso} codEstadoProceso=${codEstadoProc} archivo=${nomArchivo} codTipo=${codTipoArchivo}`);
 
-      if (codEstado === '06') {
-        if (!nomArchivo) throw new Error('Ticket listo pero sin nombre de archivo');
-        return nomArchivo;
+      // Terminado: codProceso 3 o 4 (manual v25) o codEstadoProceso 06 (fallback)
+      const terminado = codProceso === '3' || codProceso === '4' || codEstadoProc === '06';
+      const error     = codProceso === '5' || codEstadoProc === '07';
+
+      if (terminado) {
+        if (!nomArchivo) throw new Error(`Ticket listo (codProceso=${codProceso}) pero sin nombre de archivo`);
+        return { nomArchivo, codTipoArchivo, codProceso: codProceso || codEstadoProc, ticket };
       }
-      if (codEstado === '07') throw new Error('SIRE reportó error en el ticket (codEstado=07)');
+      if (error) throw new Error(`SIRE reportó error en ticket (codProceso=${codProceso} codEstado=${codEstadoProc})`);
       // Otros estados: seguir esperando
     } catch (e) {
-      if ((e as Error).message.includes('codEstado=07') || (e as Error).message.includes('sin nombre')) throw e;
-      console.log(`[POLLING] Error en intento ${i}: ${(e as Error).message}`);
+      const msg = (e as Error).message;
+      if (msg.includes('error en ticket') || msg.includes('sin nombre de archivo')) throw e;
+      console.log(`[POLLING] Error en intento ${i}: ${msg}`);
     }
   }
   throw new Error(`Timeout: ticket ${ticket} no completó en ${maxIntentos * intervaloMs / 1000}s`);
 }
 
-/** Descarga el ZIP y devuelve su contenido como Buffer */
-async function descargarZip(nomArchivo: string, periodo: string, tipo: 'RVIE'|'RCE', token: string): Promise<Buffer> {
-  // Intentar URLs en orden hasta que una funcione
-  const urls = tipo === 'RCE'
-    ? [
-        `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/descargaarchivo?nomArchivoReporte=${encodeURIComponent(nomArchivo)}`,
-        `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/exportacioncomprobantepropuesta/descarga?nomArchivoReporte=${encodeURIComponent(nomArchivo)}`,
-        `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=080000`,
-      ]
-    : [
-        `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=140000`,
-        `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte=${encodeURIComponent(nomArchivo)}&codLibro=080000`,
-      ];
+/** Descarga el ZIP usando los parámetros exactos del manual SIRE v25 sección 5.32 */
+async function descargarZip(result: TicketResult, periodo: string, tipo: 'RVIE'|'RCE', token: string): Promise<Buffer> {
+  const codLibro = tipo === 'RCE' ? '080000' : '140000';
 
-  const dlHeaders = {
-    ...sireHeaders(token),
-    'Accept': 'application/octet-stream, application/zip, */*',
-  };
+  // URL principal según manual v25 sección 5.32 con todos los parámetros requeridos
+  const params = new URLSearchParams({
+    nomArchivoReporte:     result.nomArchivo,
+    codTipoArchivoReporte: result.codTipoArchivo || 'null',
+    perTributario:         periodo,
+    codProceso:            result.codProceso,
+    numTicket:             result.ticket,
+    codLibro,
+  });
+  const urlPrincipal = `https://apisire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?${params}`;
 
-  for (const url of urls) {
+  // Fallbacks con api-sire (con guion) y sin parámetros extra
+  const urlFallback1 = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?${params}`;
+  const urlFallback2 = `${SIRE_BASE}/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte`
+    + `?nomArchivoReporte=${encodeURIComponent(result.nomArchivo)}&codLibro=${codLibro}`;
+
+  const dlHeaders = { ...sireHeaders(token), 'Accept': 'application/octet-stream, application/zip, */*' };
+
+  for (const url of [urlPrincipal, urlFallback1, urlFallback2]) {
     console.log(`[POLLING] Intentando descarga ZIP ${tipo}: ${url}`);
     try {
       const res = await fetch(url, { headers: dlHeaders, signal: AbortSignal.timeout(60000) });
       if (!res.ok) {
         const body = await res.text();
-        console.log(`[POLLING] HTTP ${res.status} en ${url}: ${body.substring(0, 200)}`);
+        console.log(`[POLLING] HTTP ${res.status}: ${body.substring(0, 300)}`);
         continue;
       }
       const buf = Buffer.from(await res.arrayBuffer());
-      console.log(`[POLLING] ZIP ${tipo} descargado OK: ${buf.length} bytes desde ${url}`);
+      console.log(`[POLLING] ZIP ${tipo} descargado OK: ${buf.length} bytes`);
       return buf;
     } catch (e) {
-      console.log(`[POLLING] Error en ${url}: ${(e as Error).message}`);
+      console.log(`[POLLING] Error fetch: ${(e as Error).message}`);
     }
   }
   throw new Error(`No se pudo descargar ZIP ${tipo} — todos los endpoints fallaron`);
@@ -578,8 +599,8 @@ export async function PUT(req: NextRequest) {
       try {
         console.log(`[PARSE] Solicitando ZIP RCE para ${periodo}...`);
         const ticketRce = await solicitarPropuesta(company.ruc as string, periodo, 'RCE', sireToken);
-        const nomArchivoRce = await esperarTicket(ticketRce, periodo, 'RCE', sireToken);
-        const zipRce = await descargarZip(nomArchivoRce, periodo, 'RCE', sireToken);
+        const resultRce = await esperarTicket(ticketRce, periodo, 'RCE', sireToken);
+        const zipRce = await descargarZip(resultRce, periodo, 'RCE', sireToken);
         const xmlsRce = extraerXmlsDeZip(zipRce);
         console.log(`[PARSE] ZIP RCE: ${xmlsRce.size} XMLs extraídos`);
         await procesarXmls(xmlsRce, compras);
@@ -606,8 +627,8 @@ export async function PUT(req: NextRequest) {
       try {
         console.log(`[PARSE] Solicitando ZIP RVIE para ${periodo}...`);
         const ticketRvie = await solicitarPropuesta(company.ruc as string, periodo, 'RVIE', sireToken);
-        const nomArchivoRvie = await esperarTicket(ticketRvie, periodo, 'RVIE', sireToken);
-        const zipRvie = await descargarZip(nomArchivoRvie, periodo, 'RVIE', sireToken);
+        const resultRvie = await esperarTicket(ticketRvie, periodo, 'RVIE', sireToken);
+        const zipRvie = await descargarZip(resultRvie, periodo, 'RVIE', sireToken);
         const xmlsRvie = extraerXmlsDeZip(zipRvie);
         console.log(`[PARSE] ZIP RVIE: ${xmlsRvie.size} XMLs extraídos`);
         await procesarXmls(xmlsRvie, ventas);
