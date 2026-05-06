@@ -687,6 +687,6 @@ export async function PUT(req: NextRequest) {
       ip: getIP(req),
     });
 
-    return ok({ parsed, errors, sinXml, total: pendientes.length });
+    return ok({ parsed, errors, sinXml, total: pendientes.length, version: 'v3-cpe' });
   } catch(e) { return err(`Error: ${(e as Error).message}`, 500); }
 }
