@@ -222,6 +222,138 @@ export async function GET(req: NextRequest) {
     filename = `${type==='COMPRA'?'compras':'ventas'}_${period||'todos'}_${new Date().toISOString().slice(0,10)}`;
   }
 
+  else if (type === 'resumen_mensual') {
+    // Resumen mensual: agrupa todos los documentos por período y tipo de operación
+    const filters: Record<string,string> = {};
+    if (companyId) filters.companyId = companyId;
+    // Sin filtro de period para traer todos los meses
+    const docs = await getDocuments(filters);
+
+    // Agrupar por período + operación
+    const grupos: Record<string, {
+      period: string; operation: string;
+      facturas: number; boletas: number; notasCredito: number; notasDebito: number; otros: number;
+      totalDocs: number; base: number; igv: number; total: number;
+    }> = {};
+
+    for (const d of docs as Record<string,unknown>[]) {
+      const per = String(d.period ?? '');
+      const op  = String(d.operation ?? '');
+      const key = `${per}|${op}`;
+      if (!grupos[key]) grupos[key] = {
+        period: per, operation: op,
+        facturas: 0, boletas: 0, notasCredito: 0, notasDebito: 0, otros: 0,
+        totalDocs: 0, base: 0, igv: 0, total: 0,
+      };
+      const g = grupos[key];
+      const tipo = String(d.docType ?? '');
+      if (tipo === '01') g.facturas++;
+      else if (tipo === '03') g.boletas++;
+      else if (tipo === '07') g.notasCredito++;
+      else if (tipo === '08') g.notasDebito++;
+      else g.otros++;
+      g.totalDocs++;
+      g.base  += Number(d.base  ?? 0);
+      g.igv   += Number(d.igv   ?? 0);
+      g.total += Math.abs(Number(d.total ?? 0));
+    }
+
+    // Ordenar por período DESC, luego COMPRA antes que VENTA
+    const rows = Object.values(grupos).sort((a, b) => {
+      if (b.period !== a.period) return b.period.localeCompare(a.period);
+      return a.operation.localeCompare(b.operation);
+    });
+
+    // Calcular totales generales
+    const totCompras = rows.filter(r => r.operation === 'COMPRA');
+    const totVentas  = rows.filter(r => r.operation === 'VENTA');
+    const sumBase  = (arr: typeof rows) => arr.reduce((s,r) => s + r.base,  0);
+    const sumIgv   = (arr: typeof rows) => arr.reduce((s,r) => s + r.igv,   0);
+    const sumTotal = (arr: typeof rows) => arr.reduce((s,r) => s + r.total, 0);
+
+    // ── Hoja 1: Resumen por mes ──────────────────────────
+    const h1 = ['Período','Operación','Facturas','Boletas','N.Crédito','N.Débito','Otros','Total Docs','Base Imponible','IGV','Total'];
+    const d1 = rows.map(r => [
+      r.period, r.operation,
+      r.facturas, r.boletas, r.notasCredito, r.notasDebito, r.otros, r.totalDocs,
+      r.base.toFixed(2), r.igv.toFixed(2), r.total.toFixed(2),
+    ]);
+    // Fila de totales compras
+    d1.push(['TOTAL COMPRAS','',
+      totCompras.reduce((s,r)=>s+r.facturas,0),
+      totCompras.reduce((s,r)=>s+r.boletas,0),
+      totCompras.reduce((s,r)=>s+r.notasCredito,0),
+      totCompras.reduce((s,r)=>s+r.notasDebito,0),
+      totCompras.reduce((s,r)=>s+r.otros,0),
+      totCompras.reduce((s,r)=>s+r.totalDocs,0),
+      sumBase(totCompras).toFixed(2), sumIgv(totCompras).toFixed(2), sumTotal(totCompras).toFixed(2),
+    ]);
+    // Fila de totales ventas
+    d1.push(['TOTAL VENTAS','',
+      totVentas.reduce((s,r)=>s+r.facturas,0),
+      totVentas.reduce((s,r)=>s+r.boletas,0),
+      totVentas.reduce((s,r)=>s+r.notasCredito,0),
+      totVentas.reduce((s,r)=>s+r.notasDebito,0),
+      totVentas.reduce((s,r)=>s+r.otros,0),
+      totVentas.reduce((s,r)=>s+r.totalDocs,0),
+      sumBase(totVentas).toFixed(2), sumIgv(totVentas).toFixed(2), sumTotal(totVentas).toFixed(2),
+    ]);
+    // IGV neto
+    d1.push(['IGV NETO A PAGAR','','','','','','','',
+      '',
+      (sumIgv(totVentas) - sumIgv(totCompras)).toFixed(2),
+      '',
+    ]);
+
+    // ── Hoja 2: Comparativo Compras vs Ventas ────────────
+    const periodos = [...new Set(rows.map(r => r.period))].sort((a,b) => b.localeCompare(a));
+    const h2 = ['Período','Base Compras','IGV Compras','Total Compras','Base Ventas','IGV Ventas','Total Ventas','IGV Neto','Diferencia Total'];
+    const d2 = periodos.map(per => {
+      const c = rows.find(r => r.period === per && r.operation === 'COMPRA');
+      const v = rows.find(r => r.period === per && r.operation === 'VENTA');
+      const bc = c?.base ?? 0, ic = c?.igv ?? 0, tc = c?.total ?? 0;
+      const bv = v?.base ?? 0, iv = v?.igv ?? 0, tv = v?.total ?? 0;
+      return [per,
+        bc.toFixed(2), ic.toFixed(2), tc.toFixed(2),
+        bv.toFixed(2), iv.toFixed(2), tv.toFixed(2),
+        (iv - ic).toFixed(2),
+        (tv - tc).toFixed(2),
+      ];
+    });
+
+    // ── Hoja 3: Info ─────────────────────────────────────
+    const d3 = [
+      ['Concepto','Valor'],
+      ['Fecha de generación', new Date().toLocaleDateString('es-PE')],
+      ['Total períodos', periodos.length],
+      ['Total documentos', docs.length],
+      ['Total compras (S/)', sumTotal(totCompras).toFixed(2)],
+      ['Total ventas (S/)', sumTotal(totVentas).toFixed(2)],
+      ['IGV crédito fiscal (S/)', sumIgv(totCompras).toFixed(2)],
+      ['IGV débito fiscal (S/)', sumIgv(totVentas).toFixed(2)],
+      ['IGV neto a pagar (S/)', (sumIgv(totVentas) - sumIgv(totCompras)).toFixed(2)],
+    ];
+
+    const wb = XLSX.utils.book_new();
+
+    const ws1 = XLSX.utils.aoa_to_sheet([h1, ...d1]);
+    ws1['!cols'] = h1.map((h, i) => ({ wch: Math.max(String(h).length, ...d1.map(r => String(r[i] ?? '').length), 10) }));
+    ws1['!freeze'] = { xSplit: 0, ySplit: 1 };
+    XLSX.utils.book_append_sheet(wb, ws1, 'Resumen por Mes');
+
+    const ws2 = XLSX.utils.aoa_to_sheet([h2, ...d2]);
+    ws2['!cols'] = h2.map((h, i) => ({ wch: Math.max(String(h).length, ...d2.map(r => String(r[i] ?? '').length), 12) }));
+    ws2['!freeze'] = { xSplit: 0, ySplit: 1 };
+    XLSX.utils.book_append_sheet(wb, ws2, 'Comparativo');
+
+    const ws3 = XLSX.utils.aoa_to_sheet(d3);
+    ws3['!cols'] = [{ wch: 30 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, ws3, 'Info');
+
+    buffer = Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+    filename = `resumen_mensual_${new Date().toISOString().slice(0,10)}`;
+  }
+
   else if (type === 'document_lines') {
     const filters: Record<string,string> = {};
     if (companyId) filters.companyId = companyId;

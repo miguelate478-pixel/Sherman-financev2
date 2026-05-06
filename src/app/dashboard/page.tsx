@@ -155,15 +155,19 @@ function ToastContainer({toasts,remove}:{toasts:Toast[];remove:(id:number)=>void
 // ══════════════════════════════════════════════════════════
 function LinePanel({doc,onClose,addToast}:{doc:Doc;onClose:()=>void;addToast:(m:string,t?:ToastType)=>void}) {
   const [approved,setApproved]=useState<Record<number,boolean>>({});
+  const lineas = doc.lineas || [];
   return <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:1000,display:'flex',justifyContent:'flex-end'}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-    <div style={{width:620,background:C.card,height:'100vh',overflowY:'auto',display:'flex',flexDirection:'column',boxShadow:'-20px 0 60px rgba(0,0,0,.2)',animation:'slideInRight .25s ease'}}>
+    <div style={{width:680,background:C.card,height:'100vh',overflowY:'auto',display:'flex',flexDirection:'column',boxShadow:'-20px 0 60px rgba(0,0,0,.2)',animation:'slideInRight .25s ease'}}>
+      {/* HEADER */}
       <div style={{background:C.navy,color:'#fff',padding:'1.25rem 1.5rem',flexShrink:0}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'start'}}>
           <div>
             <div style={{fontSize:16,fontWeight:700,fontFamily:'JetBrains Mono,monospace'}}>{doc.id}</div>
-            <div style={{fontSize:12,opacity:.6,marginTop:2}}>{doc.rs_e}</div>
+            <div style={{fontSize:12,opacity:.6,marginTop:2}}>{doc.op==='COMPRA'?doc.rs_e:doc.rs_r}</div>
             <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
-              <Badge label={doc.sunat} color={colEst(doc.sunat) as BadgeColor} sm/><Badge label={`CDR: ${doc.cdr}`} color={doc.cdr==='OK'?'green':'red'} sm/>
+              <Badge label={doc.op==='COMPRA'?'Compra':'Venta'} color={doc.op==='COMPRA'?'blue':'violet'} sm/>
+              <Badge label={doc.sunat} color={colEst(doc.sunat) as BadgeColor} sm/>
+              <Badge label={`CDR: ${doc.cdr}`} color={doc.cdr==='OK'?'green':'red'} sm/>
               <Badge label={DOC_TIPOS[doc.tipo]||doc.tipo} color="blue" sm/>
               {doc.detraccion&&<Badge label={`Det. ${doc.pct_d}%`} color="amber" sm/>}
             </div>
@@ -171,54 +175,145 @@ function LinePanel({doc,onClose,addToast}:{doc:Doc;onClose:()=>void;addToast:(m:
           <button onClick={onClose} style={{background:'rgba(255,255,255,.1)',border:'none',color:'#fff',width:30,height:30,borderRadius:'50%',cursor:'pointer',fontSize:18}}>×</button>
         </div>
       </div>
-      <div style={{padding:'.875rem 1.5rem',borderBottom:`1px solid ${C.border}`,background:C.bg,flexShrink:0}}>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
-          {([['Fecha',doc.fecha],['Vencimiento',doc.venc||'—'],['Moneda',doc.moneda],['Base',fmt(Math.abs(doc.base),doc.moneda)],['IGV',fmt(Math.abs(doc.igv),doc.moneda)],['Total',fmt(Math.abs(doc.total),doc.moneda)]] as [string,string][]).map(([k,v])=>(
+
+      {/* DATOS DEL COMPROBANTE */}
+      <div style={{padding:'1rem 1.5rem',borderBottom:`1px solid ${C.border}`,background:C.bg,flexShrink:0}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:10}}>
+          {([
+            ['Emisor RUC', doc.ruc_e],
+            ['Emisor', doc.rs_e.substring(0,25)],
+            ['Receptor RUC', doc.ruc_r],
+            ['Receptor', doc.rs_r.substring(0,25)],
+          ] as [string,string][]).map(([k,v])=>(
+            <div key={k}><div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase'}}>{k}</div><div style={{fontSize:11,color:C.t1,fontWeight:600,marginTop:1}}>{v||'—'}</div></div>
+          ))}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:8}}>
+          {([
+            ['Fecha', doc.fecha],
+            ['Vencimiento', doc.venc||'—'],
+            ['Moneda', doc.moneda],
+            ['Base', fmt(Math.abs(doc.base),doc.moneda)],
+            ['IGV', fmt(Math.abs(doc.igv),doc.moneda)],
+            ['Total', fmt(Math.abs(doc.total),doc.moneda)],
+          ] as [string,string][]).map(([k,v])=>(
             <div key={k}><div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase'}}>{k}</div><div style={{fontSize:12,color:C.t1,fontWeight:600,marginTop:1}}>{v}</div></div>
           ))}
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:10}}>
-          <div><div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase'}}>SUNAT</div><div style={{marginTop:2}}><Badge label={doc.sunat} color={colEst(doc.sunat) as BadgeColor} sm dot/></div></div>
-          <div><div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase'}}>Parser</div><div style={{marginTop:2}}><Badge label={doc.parserStatus||'—'} color={colEst(doc.parserStatus) as BadgeColor} sm dot/></div></div>
-          <div><div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase'}}>IA</div><div style={{marginTop:2}}><Badge label={doc.aiStatus||'—'} color={colEst(doc.aiStatus) as BadgeColor} sm dot/></div></div>
+        <div style={{display:'flex',gap:8,marginTop:10,flexWrap:'wrap'}}>
+          <Badge label={`SUNAT: ${doc.sunat}`} color={colEst(doc.sunat) as BadgeColor} sm dot/>
+          <Badge label={`Parser: ${doc.parserStatus||'PENDIENTE'}`} color={colEst(doc.parserStatus) as BadgeColor} sm dot/>
+          <Badge label={`IA: ${doc.aiStatus||'PENDIENTE'}`} color={colEst(doc.aiStatus) as BadgeColor} sm dot/>
+          <Badge label={`CONCAR: ${doc.concar}`} color={colEst(doc.concar) as BadgeColor} sm dot/>
         </div>
-        {doc.hash&&<div style={{marginTop:8,fontFamily:'JetBrains Mono,monospace',fontSize:10,color:C.t4}}>SHA256: {doc.hash}</div>}
+        {doc.hash&&<div style={{marginTop:6,fontFamily:'JetBrains Mono,monospace',fontSize:10,color:C.t4}}>SHA256: {doc.hash}</div>}
       </div>
+
+      {/* LÍNEAS */}
       <div style={{flex:1,padding:'1rem 1.5rem',overflowY:'auto'}}>
-        {(!doc.lineas||doc.lineas.length===0)&&<EmptyState icon="—" title="Sin líneas parseadas" sub="El XML no ha sido procesado aún o no tiene líneas."/>}
-        {(doc.lineas||[]).map((l,i)=>(
-          <div key={i} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.1rem',marginBottom:'1rem'}}>
-            <div style={{display:'flex',justifyContent:'space-between',gap:10,marginBottom:'1rem'}}>
-              <div style={{flex:1}}>
-                <div style={{fontSize:10,color:C.t4,fontWeight:700,fontFamily:'JetBrains Mono,monospace',marginBottom:4}}>LÍNEA {l.n} · {l.cod||'—'}</div>
-                <div style={{fontSize:13,color:C.t1,fontWeight:600,lineHeight:1.5}}>{l.desc}</div>
-                <div style={{display:'flex',gap:8,marginTop:6,fontSize:11,color:C.t3}}>
-                  <span>Cant: {l.qty} {l.um}</span><span>Val. unit: {fmt(l.val)}</span>
-                </div>
-              </div>
-              <div style={{textAlign:'right',flexShrink:0}}>
-                <div style={{fontSize:18,fontWeight:800,color:l.total_l<0?C.red:C.t1,fontFamily:'JetBrains Mono,monospace'}}>{fmt(l.total_l)}</div>
-                <div style={{fontSize:10,color:C.t4}}>IGV: {fmt(l.igv_l)}</div>
-              </div>
+        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>
+          Líneas del comprobante {lineas.length>0?`(${lineas.length})`:''}
+        </div>
+
+        {lineas.length === 0 ? (
+          <div style={{background:C.amberL,border:`1px solid ${C.amberM}`,borderRadius:10,padding:'1.25rem',textAlign:'center'}}>
+            <div style={{fontSize:24,marginBottom:8}}>📄</div>
+            <div style={{fontWeight:700,color:C.amber,marginBottom:4}}>Sin líneas disponibles</div>
+            <div style={{fontSize:12,color:C.t3,lineHeight:1.6}}>
+              Las líneas se generan cuando se descarga el XML del comprobante.<br/>
+              Para obtenerlas, ejecuta una descarga masiva con <strong>"Extraer líneas del XML"</strong> activado.
             </div>
-            {l.cuenta&&<div style={{background:C.blueL,border:`1px solid ${C.blueM}`,borderRadius:8,padding:'.9rem'}}>
-              <div style={{fontSize:10,fontWeight:800,color:C.blue,textTransform:'uppercase',letterSpacing:1,marginBottom:'.75rem'}}>✦ Clasificación IA</div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:'.75rem'}}>
-                <div><div style={{fontSize:9,color:C.blue,fontWeight:700,textTransform:'uppercase',marginBottom:3}}>Cuenta PCGE</div><div style={{fontSize:14,fontWeight:800,color:C.navy,fontFamily:'JetBrains Mono,monospace'}}>{l.cuenta}</div><div style={{fontSize:11,color:C.t2,marginTop:1}}>{PCGE_NAMES[l.cuenta]||'—'}</div></div>
-                <div><div style={{fontSize:9,color:C.blue,fontWeight:700,textTransform:'uppercase',marginBottom:3}}>Centro de costo</div><div style={{fontSize:14,fontWeight:800,color:C.navy}}>{l.cc||'—'}</div><div style={{fontSize:11,color:C.t2,marginTop:1}}>{l.cat||'—'}</div></div>
-              </div>
-              <div style={{marginBottom:'.75rem'}}>
-                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{fontSize:10,color:C.blue,fontWeight:600}}>Confianza IA</span><span style={{fontSize:12,fontWeight:800,color:l.ia>=85?C.green:l.ia>=70?C.amber:C.red}}>{l.ia}%</span></div>
-                <div style={{height:6,background:C.blueM,borderRadius:3,overflow:'hidden'}}><div style={{width:`${l.ia}%`,height:'100%',background:l.ia>=85?C.green:l.ia>=70?C.amber:C.red,borderRadius:3}}/></div>
-              </div>
-              <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
-                {l.rev&&<Badge label="⚠ Revisión req." color="amber" sm/>}
-                {l.rec&&<Badge label="↺ Recurrente" color="blue" sm/>}
-                {!approved[l.n]?<><Btn size="sm" color="green" onClick={()=>{setApproved(p=>({...p,[l.n]:true}));addToast('Clasificación aprobada','success');}}>✓ Aprobar</Btn><Btn size="sm" color="ghost">✎ Editar</Btn></>:<span style={{fontSize:11,color:C.green,fontWeight:600}}>✓ Aprobado</span>}
-              </div>
-            </div>}
           </div>
-        ))}
+        ) : (
+          <>
+            {/* TABLA COMPACTA */}
+            <div style={{overflowX:'auto',marginBottom:'1rem'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{background:C.bg}}>
+                    <Th center>N°</Th>
+                    <Th>Descripción</Th>
+                    <Th right>Cant.</Th>
+                    <Th right>P. Unit.</Th>
+                    <Th right>IGV</Th>
+                    <Th right>Total</Th>
+                    <Th center>Cuenta PCGE</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineas.map((l,i)=>(
+                    <tr key={i} style={{background:i%2===0?C.card:C.bg}}>
+                      <Td center mono small>{l.n}</Td>
+                      <Td small>
+                        <div style={{maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={l.desc}>{l.desc}</div>
+                        {l.cod&&<div style={{fontSize:10,color:C.t4,fontFamily:'JetBrains Mono,monospace'}}>{l.cod}</div>}
+                      </Td>
+                      <Td right mono small>{l.qty} {l.um}</Td>
+                      <Td right mono small>{fmt(l.val)}</Td>
+                      <Td right mono small>{fmt(l.igv_l)}</Td>
+                      <Td right mono bold color={l.total_l<0?C.red:undefined}>{fmt(l.total_l)}</Td>
+                      <Td center>
+                        {l.cuenta
+                          ? <div>
+                              <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,fontWeight:700,color:C.blue}}>{l.cuenta}</div>
+                              <div style={{fontSize:10,color:C.t4}}>{l.ia}% conf.</div>
+                            </div>
+                          : <span style={{color:C.t5,fontSize:11}}>—</span>
+                        }
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{background:C.navy,color:'#fff'}}>
+                    <td colSpan={5} style={{padding:'.5rem .75rem',fontSize:12,fontWeight:700,textAlign:'right'}}>TOTAL</td>
+                    <td style={{padding:'.5rem .75rem',fontSize:13,fontWeight:800,textAlign:'right',fontFamily:'JetBrains Mono,monospace'}}>
+                      {fmt(lineas.reduce((s,l)=>s+l.total_l,0))}
+                    </td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            {/* DETALLE IA por línea */}
+            {lineas.some(l=>l.cuenta)&&(
+              <div style={{marginTop:'1rem'}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.t1,marginBottom:'.75rem'}}>✦ Clasificación IA</div>
+                {lineas.filter(l=>l.cuenta).map((l,i)=>(
+                  <div key={i} style={{background:C.blueL,border:`1px solid ${C.blueM}`,borderRadius:8,padding:'.9rem',marginBottom:'.75rem'}}>
+                    <div style={{fontSize:11,color:C.t2,marginBottom:'.5rem',fontWeight:600}}>Línea {l.n}: {l.desc.substring(0,60)}{l.desc.length>60?'...':''}</div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+                      <div>
+                        <div style={{fontSize:9,color:C.blue,fontWeight:700,textTransform:'uppercase',marginBottom:3}}>Cuenta PCGE</div>
+                        <div style={{fontSize:13,fontWeight:800,color:C.navy,fontFamily:'JetBrains Mono,monospace'}}>{l.cuenta}</div>
+                        <div style={{fontSize:10,color:C.t3}}>{PCGE_NAMES[l.cuenta]||'—'}</div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:9,color:C.blue,fontWeight:700,textTransform:'uppercase',marginBottom:3}}>Centro de costo</div>
+                        <div style={{fontSize:13,fontWeight:700,color:C.navy}}>{l.cc||'—'}</div>
+                        <div style={{fontSize:10,color:C.t3}}>{l.cat||'—'}</div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:9,color:C.blue,fontWeight:700,textTransform:'uppercase',marginBottom:3}}>Confianza</div>
+                        <div style={{fontSize:13,fontWeight:800,color:l.ia>=85?C.green:l.ia>=70?C.amber:C.red}}>{l.ia}%</div>
+                        <div style={{height:4,background:C.blueM,borderRadius:2,marginTop:4}}><div style={{width:`${l.ia}%`,height:'100%',background:l.ia>=85?C.green:l.ia>=70?C.amber:C.red,borderRadius:2}}/></div>
+                      </div>
+                    </div>
+                    <div style={{display:'flex',gap:6,marginTop:8,alignItems:'center'}}>
+                      {l.rev&&<Badge label="⚠ Revisión req." color="amber" sm/>}
+                      {l.rec&&<Badge label="↺ Recurrente" color="blue" sm/>}
+                      {!approved[l.n]
+                        ? <Btn size="sm" color="green" onClick={()=>{setApproved(p=>({...p,[l.n]:true}));addToast('Clasificación aprobada','success');}}>✓ Aprobar</Btn>
+                        : <span style={{fontSize:11,color:C.green,fontWeight:600}}>✓ Aprobado</span>
+                      }
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   </div>;
@@ -1105,7 +1200,10 @@ function DocTableView({docs,titulo,sub,addToast,onRefresh,exportType,empresa,per
       <div><div style={{fontSize:22,fontWeight:800,color:C.t1}}>{titulo}</div><div style={{fontSize:13,color:C.t3}}>{sub} · {filtrados.length}/{docs.length} documentos</div></div>
       <div style={{display:'flex',gap:8}}>
         {exportType && empresa ? (
-          <Btn color="green" size="sm" onClick={()=>API.exportCSV(exportType, empresa.id, period)}>↓ Excel SIRE</Btn>
+          <>
+            <Btn color="green" size="sm" onClick={()=>API.exportCSV(exportType, empresa.id, period)}>↓ Excel SIRE</Btn>
+            <Btn color="teal" size="sm" onClick={()=>API.exportCSV('resumen_mensual', empresa.id)}>↓ Resumen Mensual</Btn>
+          </>
         ) : (
           <Btn color="ghost" size="sm" onClick={()=>{
             const XLSX2 = require('xlsx');
