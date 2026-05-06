@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
     solUser: cred.solUser,
     clientId: cred.clientId,
     hasClientId: !!cred.clientId,
+    hasClientSecret: !!cred.encClientSecret,
     provider: cred.provider,
     status: cred.status,
   });
