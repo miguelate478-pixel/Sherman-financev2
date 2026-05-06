@@ -176,17 +176,88 @@ export async function POST(req: NextRequest) {
               continue;
             }
 
-            if(includeDetails&&xmlContent){
-              try{
-                const{parseXmlUbl}=await import('@/lib/xml-parser');
-                const parsed=await parseXmlUbl(xmlContent);
-                for(const line of parsed.lines){
-                  let cl=null;
-                  if(classifyWithAI)try{cl=await ai.classifyLine(line.description,line.lineTotal,doc.tipo);}catch{}
-                  await createDocumentLine({id:`${docId}-L${line.lineNumber}`,documentId:docId,lineNumber:line.lineNumber,code:line.code||'',description:line.description,quantity:line.quantity,unit:line.unit,unitValue:line.unitValue,igvAmount:line.igvAmount,lineTotal:line.lineTotal,affectType:line.affectType,pcgeAccount:cl?.pcgeAccount||null,costCenter:cl?.costCenter||null,category:cl?.category||null,iaConfidence:cl?.confidence||0,needsReview:cl?.needsReview||false,isRecurrent:cl?.isRecurrent||false});
+            // ── Extraer líneas del XML ──────────────────────────────
+            if (includeDetails) {
+              // 1. Intentar con XML ya descargado vía SIRE (si existe)
+              let xmlForLines: string | undefined = xmlContent;
+
+              // 2. Si no hay XML de SIRE, intentar descarga individual vía API CPE
+              if (!xmlForLines && clientId && clientSecret) {
+                try {
+                  const cpeToken = await getCpeToken(
+                    company.ruc as string,
+                    (cred?.solUser as string) || '',
+                    solPass,
+                    clientId,
+                    clientSecret
+                  );
+                  // Para compras: el emisor es doc.rucEmisor
+                  // Para ventas: el emisor es la propia empresa
+                  const rucEmisorCpe = op === 'COMPRAS' ? doc.rucEmisor : company.ruc as string;
+                  const cpeResult = await downloadCpeFile(cpeToken, doc.tipo, doc.serie, doc.numero, rucEmisorCpe, 'xml');
+                  if (cpeResult.ok && cpeResult.content.length > 0) {
+                    xmlForLines = cpeResult.content.toString('utf8');
+                    console.log(`[BULK] XML CPE descargado para ${docId}: ${xmlForLines.length} bytes`);
+                    // Actualizar flags en BD
+                    hasXml = true;
+                    docHash = cpeResult.content.toString('hex').substring(0, 64);
+                    await updateDocument(docId, { hasXml: true, hashSha256: docHash });
+                  } else {
+                    console.log(`[BULK] CPE XML no disponible para ${docId}: ${cpeResult.error}`);
+                  }
+                } catch (cpeErr) {
+                  console.log(`[BULK] Error CPE para ${docId}: ${(cpeErr as Error).message}`);
                 }
-                await updateDocument(docId,{parserStatus:'PARSEADO',aiStatus:classifyWithAI?'CLASIFICADO':'PENDIENTE'});
-              }catch{}
+              }
+
+              // 3. Parsear XML y guardar líneas
+              if (xmlForLines) {
+                try {
+                  const { parseXmlUbl } = await import('@/lib/xml-parser');
+                  const parsed = await parseXmlUbl(xmlForLines);
+                  let linesGuardadas = 0;
+                  for (const line of parsed.lines) {
+                    let cl = null;
+                    if (classifyWithAI) {
+                      try { cl = await ai.classifyLine(line.description, line.lineTotal, doc.tipo); } catch {}
+                    }
+                    try {
+                      await createDocumentLine({
+                        id:           `${docId}-L${line.lineNumber}`,
+                        documentId:   docId,
+                        lineNumber:   line.lineNumber,
+                        code:         line.code || '',
+                        description:  line.description,
+                        quantity:     line.quantity,
+                        unit:         line.unit,
+                        unitValue:    line.unitValue,
+                        igvAmount:    line.igvAmount,
+                        lineTotal:    line.lineTotal,
+                        affectType:   line.affectType,
+                        pcgeAccount:  cl?.pcgeAccount  || null,
+                        costCenter:   cl?.costCenter   || null,
+                        category:     cl?.category     || null,
+                        iaConfidence: cl?.confidence   || 0,
+                        needsReview:  cl?.needsReview  || false,
+                        isRecurrent:  cl?.isRecurrent  || false,
+                      });
+                      linesGuardadas++;
+                    } catch (lineErr) {
+                      console.error(`[BULK] Error guardando línea ${line.lineNumber} de ${docId}:`, (lineErr as Error).message);
+                    }
+                  }
+                  await updateDocument(docId, {
+                    parserStatus: 'PARSEADO',
+                    aiStatus:     classifyWithAI ? 'CLASIFICADO' : 'PENDIENTE',
+                  });
+                  console.log(`[BULK] ${docId}: ${linesGuardadas}/${parsed.lines.length} líneas guardadas`);
+                } catch (parseErr) {
+                  console.error(`[BULK] Error parseando XML de ${docId}:`, (parseErr as Error).message);
+                  await updateDocument(docId, { parserStatus: 'ERROR' });
+                }
+              } else {
+                console.log(`[BULK] ${docId}: sin XML disponible para extraer líneas`);
+              }
             }
           }
 

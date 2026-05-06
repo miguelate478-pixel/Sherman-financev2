@@ -232,7 +232,8 @@ export async function createDocumentLine(data: Row) {
     `INSERT INTO document_lines (id,"documentId","lineNumber",code,description,quantity,unit,
      "unitValue","igvAmount","lineTotal","affectType","pcgeAccount","costCenter",category,
      "iaConfidence","needsReview","isRecurrent",approved,"approvedBy","createdAt")
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+     ON CONFLICT (id) DO NOTHING`,
     [data.id, data.documentId, data.lineNumber, data.code ?? '', data.description,
      data.quantity, data.unit ?? 'ZZ', data.unitValue, data.igvAmount, data.lineTotal,
      data.affectType ?? '10', data.pcgeAccount ?? null, data.costCenter ?? null,
