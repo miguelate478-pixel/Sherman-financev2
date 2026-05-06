@@ -1171,6 +1171,37 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
             <div style={{fontSize:10,color:C.t4,marginTop:4,lineHeight:1.4}}>
               Solo disponible para comprobantes emitidos por la empresa via sistema electrónico SUNAT
             </div>
+            <div style={{marginTop:8}}>
+              <Btn color="violet" full disabled={running} onClick={async()=>{
+                if(!empresa?.id){addToast('Selecciona empresa','error');return;}
+                setRunning(true);addLog('🌐 Iniciando browser automation (portal e-factura SUNAT)...');
+                addLog('⏳ Esto puede tardar 2-3 minutos mientras Chromium navega el portal...');
+                try{
+                  const r=await fetch('/api/sunat/sire',{method:'PUT',headers:H(),body:JSON.stringify({companyId:empresa.id,period:cfg.periodFrom,maxDocs:50})});
+                  const d=await r.json();
+                  setRunning(false);
+                  if(d.ok){
+                    // Mostrar logs del browser
+                    if(d.data.logs) d.data.logs.forEach((l:string)=>addLog(`  ${l}`));
+                    const msg = d.data.parsed > 0
+                      ? `✅ ${d.data.parsed} docs parseados con líneas via portal SUNAT`
+                      : `ℹ Sin XMLs encontrados en el portal (${d.data.total} procesados)`;
+                    addLog(msg, d.data.parsed > 0);
+                    if(d.data.parsed > 0) addToast(`${d.data.parsed} documentos con líneas obtenidos`,'success');
+                    else addToast(d.data.message || 'Sin XMLs disponibles','info');
+                    onRefresh();
+                  } else {
+                    addLog(`❌ ${d.error}`,false);
+                    addToast(d.error||'Error browser','error');
+                  }
+                }catch(e){setRunning(false);addLog(`❌ ${(e as Error).message}`,false);}
+              }}>
+                🌐 Descargar XMLs via Portal SUNAT
+              </Btn>
+              <div style={{fontSize:10,color:C.t4,marginTop:4,lineHeight:1.4}}>
+                Automatiza el portal e-factura.sunat.gob.pe para obtener XMLs de compras recibidas
+              </div>
+            </div>
           </div>
         </div>
       </div>

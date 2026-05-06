@@ -93,3 +93,136 @@ export async function GET(req: NextRequest) {
     return ok({ sunatRaw: parsed, sunatStatus: rawRes.status, consultarTicketResult: result });
   } catch(e) { return err((e as Error).message, 500); }
 }
+
+// ─── PUT: Descarga XMLs via browser automation (portal e-factura) ────────────
+// Usa Puppeteer + Chromium para automatizar el portal SUNAT y descargar
+// los XMLs de comprobantes recibidos (compras) que no están en la API CPE.
+export async function PUT(req: NextRequest) {
+  const user = await getUser(req);
+  if (!user) return unauthorized();
+  try {
+    const { companyId, period, maxDocs = 50 } = await req.json() as {
+      companyId: string; period: string; maxDocs?: number;
+    };
+    if (!companyId || !period) return err('companyId y period requeridos');
+
+    const company = await findCompanyById(companyId);
+    const cred    = await getCredentialByCompany(companyId);
+    if (!company) return err('Empresa no encontrada');
+    if (!cred)    return err('Sin credenciales SOL');
+
+    if (process.env.SUNAT_PROVIDER !== 'direct') {
+      return err('Browser automation solo disponible en modo direct (producción)');
+    }
+
+    const solPass = decrypt(cred.encryptedPass as string, cred.iv as string, cred.authTag as string);
+
+    // Importar el módulo de browser automation
+    const { downloadXmlsViaBrowser } = await import('@/lib/sunat-browser');
+    const { parseXmlUbl } = await import('@/lib/xml-parser');
+    const { createDocumentLine, updateDocument, getDocuments } = await import('@/lib/db');
+    const { getAiProvider } = await import('@/lib/providers/ai');
+    const ai = getAiProvider();
+
+    const logs: string[] = [];
+    const log = (m: string) => {
+      console.log(`[BROWSER] ${m}`);
+      logs.push(m);
+    };
+
+    log(`Iniciando descarga browser para ${company.ruc} período ${period}`);
+
+    // Descargar XMLs via browser
+    const xmlResults = await downloadXmlsViaBrowser({
+      ruc:      company.ruc as string,
+      solUser:  cred.solUser as string,
+      solPass,
+      period,
+      maxDocs,
+      onProgress: log,
+    });
+
+    log(`XMLs obtenidos del portal: ${xmlResults.length}`);
+
+    if (xmlResults.length === 0) {
+      return ok({ parsed: 0, errors: 0, total: 0, logs, message: 'No se encontraron XMLs en el portal' });
+    }
+
+    // Obtener docs existentes en BD para hacer match
+    const existingDocs = await getDocuments({ companyId, period });
+    const docMap = new Map(
+      (existingDocs as Record<string, unknown>[]).map(d => [
+        `${d.serie}-${d.number}`, d
+      ])
+    );
+
+    let parsed = 0, errors = 0;
+
+    for (const xmlResult of xmlResults) {
+      if (xmlResult.error) { errors++; continue; }
+
+      const docKey = `${xmlResult.serie}-${xmlResult.numero}`;
+      const doc = docMap.get(docKey);
+
+      if (!doc) {
+        log(`Doc ${docKey} no encontrado en BD, saltando`);
+        continue;
+      }
+
+      const docId = doc.id as string;
+      const tipo  = doc.docType as string;
+
+      try {
+        const parsedDoc = await parseXmlUbl(xmlResult.xmlContent);
+        let linesGuardadas = 0;
+
+        for (const line of parsedDoc.lines) {
+          let cl = null;
+          try { cl = await ai.classifyLine(line.description, line.lineTotal, tipo); } catch {}
+          try {
+            await createDocumentLine({
+              id:           `${docId}-L${line.lineNumber}`,
+              documentId:   docId,
+              lineNumber:   line.lineNumber,
+              code:         line.code || '',
+              description:  line.description,
+              quantity:     line.quantity,
+              unit:         line.unit,
+              unitValue:    line.unitValue,
+              igvAmount:    line.igvAmount,
+              lineTotal:    line.lineTotal,
+              affectType:   line.affectType,
+              pcgeAccount:  cl?.pcgeAccount  || null,
+              costCenter:   cl?.costCenter   || null,
+              category:     cl?.category     || null,
+              iaConfidence: cl?.confidence   || 0,
+              needsReview:  cl?.needsReview  || false,
+              isRecurrent:  cl?.isRecurrent  || false,
+            });
+            linesGuardadas++;
+          } catch {}
+        }
+
+        await updateDocument(docId, { hasXml: true, parserStatus: 'PARSEADO', aiStatus: 'CLASIFICADO' });
+        log(`${docId}: ${linesGuardadas}/${parsedDoc.lines.length} líneas guardadas ✓`);
+        parsed++;
+      } catch (e) {
+        log(`Error parseando ${docId}: ${(e as Error).message}`);
+        await updateDocument(docId, { parserStatus: 'ERROR' });
+        errors++;
+      }
+    }
+
+    await createAuditLog({
+      userId: user.sub, userEmail: user.email, userRole: user.role,
+      action: 'BROWSER_XML_DOWNLOAD',
+      object: `${companyId} ${period} parsed=${parsed} errors=${errors}`,
+      ip: getIP(req),
+    });
+
+    return ok({ parsed, errors, total: xmlResults.length, logs });
+  } catch (e) {
+    console.error('[BROWSER] Error fatal:', (e as Error).message);
+    return err(`Error browser: ${(e as Error).message}`, 500);
+  }
+}

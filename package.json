@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",
+    "@sparticuz/chromium": "130.0.0",
     "@types/adm-zip": "0.5.8",
     "@types/pg": "^8.20.0",
     "adm-zip": "0.5.17",
@@ -26,6 +27,7 @@
     "next": "15.5.15",
     "nodemailer": "^8.0.7",
     "pg": "^8.20.0",
+    "puppeteer-core": "22.15.0",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
