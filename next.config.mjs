@@ -8,6 +8,8 @@ const nextConfig = {
     "nodemailer",
     "speakeasy",
     "qrcode",
+    "puppeteer-core",
+    "@sparticuz/chromium",
   ],
 };
 export default nextConfig;
