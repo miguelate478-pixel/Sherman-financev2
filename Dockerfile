@@ -32,10 +32,13 @@ ENV CHROMIUM_PATH=/usr/bin/chromium
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 
 COPY . .
 RUN npm run build
+
+# Limpiar devDependencies después del build
+RUN npm prune --omit=dev
 
 EXPOSE 8080
 
