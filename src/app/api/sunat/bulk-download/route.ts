@@ -380,32 +380,33 @@ async function esperarTicket(ticket: string, periodo: string, tipo: 'RVIE'|'RCE'
       const reg = registros.find(r => String(r.numTicket) === ticket) ?? registros[0];
       if (!reg) { console.log(`[POLLING] Sin registro para ticket ${ticket}`); continue; }
 
-      // Manual v25 sección 5.31: campo codProceso, valores 3=listo con archivo, 4=listo sin errores
-      // También soportar codEstadoProceso='06' como fallback (versiones anteriores)
+      // SUNAT devuelve codEstadoProceso="06" cuando termina (codProceso="10" es el tipo de proceso)
+      const codEstadoProc = String(reg.codEstadoProceso ?? '');
       const codProceso    = String(reg.codProceso ?? '');
-      const codEstadoProc = String(reg.codEstadoProceso ?? reg.codEstado ?? '');
       const archivoArr    = reg.archivoReporte as Record<string,unknown>[] | undefined;
-      const detalle       = reg.detalleTicket as Record<string,unknown> | undefined;
 
+      // OJO: SUNAT tiene typo en el campo — es "codTipoAchivoReporte" (sin r)
       const nomArchivo = String(
         archivoArr?.[0]?.nomArchivoReporte
-        ?? detalle?.nomArchivoReporte
-        ?? reg.nomArchivoReporte
         ?? ''
       );
-      const codTipoArchivo = String(archivoArr?.[0]?.codTipoArchivoReporte ?? '');
+      const codTipoArchivo = String(
+        archivoArr?.[0]?.codTipoAchivoReporte   // typo oficial SUNAT
+        ?? archivoArr?.[0]?.codTipoArchivoReporte  // fallback con ortografía correcta
+        ?? ''
+      );
 
-      console.log(`[POLLING] codProceso=${codProceso} codEstadoProceso=${codEstadoProc} archivo=${nomArchivo} codTipo=${codTipoArchivo}`);
+      console.log(`[POLLING] codEstadoProceso=${codEstadoProc} codProceso=${codProceso} archivo=${nomArchivo} codTipo=${codTipoArchivo}`);
 
-      // Terminado: codProceso 3 o 4 (manual v25) o codEstadoProceso 06 (fallback)
-      const terminado = codProceso === '3' || codProceso === '4' || codEstadoProc === '06';
-      const error     = codProceso === '5' || codEstadoProc === '07';
+      // Terminado: codEstadoProceso="06" (Terminado según SUNAT)
+      const terminado = codEstadoProc === '06';
+      const error     = codEstadoProc === '07';
 
       if (terminado) {
-        if (!nomArchivo) throw new Error(`Ticket listo (codProceso=${codProceso}) pero sin nombre de archivo`);
-        return { nomArchivo, codTipoArchivo, codProceso: codProceso || codEstadoProc, ticket };
+        if (!nomArchivo) throw new Error(`Ticket listo (codEstado=06) pero sin nombre de archivo`);
+        return { nomArchivo, codTipoArchivo, codProceso, ticket };
       }
-      if (error) throw new Error(`SIRE reportó error en ticket (codProceso=${codProceso} codEstado=${codEstadoProc})`);
+      if (error) throw new Error(`SIRE reportó error en ticket (codEstado=${codEstadoProc})`);
       // Otros estados: seguir esperando
     } catch (e) {
       const msg = (e as Error).message;
