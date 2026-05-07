@@ -1,0 +1,1 @@
+﻿{"ok":true,"data":{"jobId":"bjjzu0orrys","status":"COMPLETADO_CON_ERRORES","totalDocs":0,"totalXml":0,"totalPdf":0,"totalCdr":0,"totalErrors":1,"lastError":"SIRE reportÃ³ error en el ticket"}}

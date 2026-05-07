@@ -234,7 +234,40 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // 3. Parsear XML y guardar líneas
+              // 3. Si tampoco hay XML de CPE, intentar scraping como último recurso (solo para COMPRAS)
+              if (!xmlForLines && op === 'COMPRAS' && cred) {
+                try {
+                  console.log(`[BULK] Intentando scraping para ${docId}...`);
+                  const { downloadXmlFromSunat } = await import('@/lib/providers/sunat-scraper');
+                  const scraperResult = await downloadXmlFromSunat(
+                    {
+                      ruc: company.ruc as string,
+                      solUser: cred.solUser as string,
+                      solPass,
+                    },
+                    {
+                      rucEmisor: doc.rucEmisor,
+                      serie: doc.serie,
+                      numero: doc.numero,
+                      tipoComprobante: doc.tipo,
+                    }
+                  );
+
+                  if (scraperResult.xmlContent) {
+                    xmlForLines = scraperResult.xmlContent;
+                    console.log(`[BULK] XML scrapeado para ${docId}: ${xmlForLines.length} bytes`);
+                    // Actualizar flags en BD
+                    hasXml = true;
+                    await updateDocument(docId, { hasXml: true });
+                  } else {
+                    console.log(`[BULK] Scraping falló para ${docId}: ${scraperResult.error}`);
+                  }
+                } catch (scraperErr) {
+                  console.log(`[BULK] Error scraping para ${docId}: ${(scraperErr as Error).message}`);
+                }
+              }
+
+              // 4. Parsear XML y guardar líneas
               if (xmlForLines) {
                 try {
                   const { parseXmlUbl } = await import('@/lib/xml-parser');
@@ -281,6 +314,7 @@ export async function POST(req: NextRequest) {
                 }
               } else {
                 console.log(`[BULK] ${docId}: sin XML disponible para extraer líneas`);
+                await updateDocument(docId, { parserStatus: 'SIN_XML' });
               }
             }
           }
