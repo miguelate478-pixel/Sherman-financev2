@@ -76,45 +76,39 @@ export async function downloadXmlFromSunat(
     });
     await new Promise(r => setTimeout(r, 4000));
 
-    // ⚠️ CRÍTICO: ESPERAR A QUE EL IFRAME SE CARGUE COMPLETAMENTE
-    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Esperando iframe del formulario...`);
-    
-    // Esperar a que aparezca un iframe con la URL del formulario
-    await page.waitForFunction(
-      () => {
-        const frames = Array.from(document.querySelectorAll('iframe'));
-        return frames.some(f => f.src.includes('consultacpe') || f.src.includes('nuevaconsulta'));
-      },
-      { timeout: 10000 }
-    );
-    
-    await new Promise(r => setTimeout(r, 2000));
-
-    // BUSCAR FRAME CON FORMULARIO
+    // BUSCAR FRAME CON FORMULARIO — buscar por contenido, no por URL
     let targetFrame = page.mainFrame();
-    for (const frame of page.frames()) {
-      try {
-        const frameUrl = frame.url();
-        // Verificar que sea el iframe correcto por URL
-        if (frameUrl.includes('consultacpe') || frameUrl.includes('nuevaconsulta')) {
-          // Verificar que tenga el formulario
+    
+    // Esperar que aparezca el input del formulario en cualquier frame
+    let formFound = false;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await new Promise(r => setTimeout(r, 1000));
+      
+      for (const frame of page.frames()) {
+        try {
           const hasForm = await frame.evaluate(() => 
-            !!(document.querySelector('input[formcontrolname="rucEmisor"]'))
-          ).catch(() => false);
+            !!(document.querySelector('input[formcontrolname="rucEmisor"]') ||
+               document.querySelector('input[name="rucEmisor"]'))
+          );
           
           if (hasForm) {
             targetFrame = frame;
-            console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Frame correcto encontrado: ${frameUrl}`);
+            formFound = true;
+            console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Formulario encontrado en: ${frame.url()}`);
             break;
           }
-        }
-      } catch { /* frame no accesible */ }
+        } catch { /* frame no accesible */ }
+      }
+      
+      if (formFound) break;
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Intento ${attempt + 1}/10 buscando formulario...`);
     }
     
-    // Verificar que encontramos el frame correcto
-    if (targetFrame === page.mainFrame()) {
-      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: ERROR - No se encontró iframe del formulario`);
-      return { xmlContent: null, error: 'Iframe del formulario no encontrado' };
+    if (!formFound) {
+      // Log todos los frames disponibles para debug
+      const frameUrls = page.frames().map(f => f.url());
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Frames disponibles:`, frameUrls);
+      return { xmlContent: null, error: 'Formulario no encontrado después de 10 intentos' };
     }
 
     // CLICK RECIBIDO
