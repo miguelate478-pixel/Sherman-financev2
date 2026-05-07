@@ -29,14 +29,17 @@ WORKDIR /app
 # Copiar package files
 COPY package*.json ./
 
-# Instalar dependencias
-RUN npm ci --only=production
+# Instalar TODAS las dependencias (necesarias para build)
+RUN npm ci
 
 # Copiar código fuente
 COPY . .
 
 # Build de Next.js
 RUN npm run build
+
+# Limpiar devDependencies después del build
+RUN npm prune --production
 
 # Variables de entorno
 ENV NODE_ENV=production

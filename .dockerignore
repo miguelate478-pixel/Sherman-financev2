@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.env.local
+*.log
+npm-debug.log*
+.DS_Store
+*.md
+!README.md
+temp-downloads
+*.png
+*.jpg
+*.zip
+*.txt
+*.mjs
