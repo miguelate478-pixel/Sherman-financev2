@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 
 export interface ScraperCredentials {
   ruc: string;
@@ -16,19 +17,35 @@ export async function downloadXmlFromSunat(
   creds: ScraperCredentials,
   factura: FacturaQuery
 ): Promise<{ xmlContent: string | null; error?: string }> {
-  const chromiumPath = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
+  // Usar @sparticuz/chromium para entornos serverless (Railway, Lambda, etc.)
+  // En desarrollo local, usar CHROMIUM_PATH del .env
+  const isProduction = process.env.NODE_ENV === 'production' || !process.env.CHROMIUM_PATH;
+  const chromiumPath = isProduction 
+    ? await chromium.executablePath()
+    : process.env.CHROMIUM_PATH;
+
+  console.log(`[SCRAPER] Usando Chromium: ${chromiumPath} (production: ${isProduction})`);
+
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
 
   try {
     browser = await puppeteer.launch({
       executablePath: chromiumPath,
       headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
+      args: isProduction 
+        ? [
+            ...chromium.args,
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+          ]
+        : [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+          ],
     });
 
     const page = await browser.newPage();
