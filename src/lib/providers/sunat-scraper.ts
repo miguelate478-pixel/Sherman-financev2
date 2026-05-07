@@ -295,7 +295,7 @@ export async function downloadXmlFromSunat(
     }
 
     // En este punto xmlContent es definitivamente string (no null)
-    const xmlSize = xmlContent.length;
+    const xmlSize = (xmlContent as string).length;
     console.log(`[SCRAPER] ✅ XML descargado exitosamente (${xmlSize} bytes)`);
 
     return { xmlContent };

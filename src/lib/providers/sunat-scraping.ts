@@ -341,9 +341,9 @@ export class SunatScrapingProvider {
 
       const formFilled = await targetFrame.evaluate((data) => {
         // RUC Emisor - múltiples selectores
-        const rucInput = document.querySelector('input[name="rucEmisor"]') ||
+        const rucInput = (document.querySelector('input[name="rucEmisor"]') ||
                         document.querySelector('input[formcontrolname="rucEmisor"]') ||
-                        document.querySelector('#rucEmisor') as HTMLInputElement;
+                        document.querySelector('#rucEmisor')) as HTMLInputElement | null;
         
         if (!rucInput) return { success: false, field: 'rucEmisor' };
         rucInput.value = data.rucEmisor;
@@ -351,9 +351,9 @@ export class SunatScrapingProvider {
         rucInput.dispatchEvent(new Event('change', { bubbles: true }));
         
         // Tipo de comprobante
-        const tipoSelect = document.querySelector('select[name="tipoComprobante"]') ||
+        const tipoSelect = (document.querySelector('select[name="tipoComprobante"]') ||
                           document.querySelector('select[formcontrolname="tipoComprobante"]') ||
-                          document.querySelector('#tipoComprobante') as HTMLSelectElement;
+                          document.querySelector('#tipoComprobante')) as HTMLSelectElement | null;
         
         if (tipoSelect) {
           tipoSelect.value = data.tipoComprobante;
@@ -361,9 +361,9 @@ export class SunatScrapingProvider {
         }
         
         // Serie
-        const serieInput = document.querySelector('input[name="serieComprobante"]') ||
+        const serieInput = (document.querySelector('input[name="serieComprobante"]') ||
                           document.querySelector('input[formcontrolname="serieComprobante"]') ||
-                          document.querySelector('#serieComprobante') as HTMLInputElement;
+                          document.querySelector('#serieComprobante')) as HTMLInputElement | null;
         
         if (!serieInput) return { success: false, field: 'serieComprobante' };
         serieInput.value = data.serie;
@@ -371,9 +371,9 @@ export class SunatScrapingProvider {
         serieInput.dispatchEvent(new Event('change', { bubbles: true }));
         
         // Número
-        const numeroInput = document.querySelector('input[name="numeroComprobante"]') ||
+        const numeroInput = (document.querySelector('input[name="numeroComprobante"]') ||
                            document.querySelector('input[formcontrolname="numeroComprobante"]') ||
-                           document.querySelector('#numeroComprobante') as HTMLInputElement;
+                           document.querySelector('#numeroComprobante')) as HTMLInputElement | null;
         
         if (!numeroInput) return { success: false, field: 'numeroComprobante' };
         numeroInput.value = data.numero;
