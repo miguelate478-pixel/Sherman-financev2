@@ -57,16 +57,6 @@ async function getBrowser() {
   return browser;
 }
 
-// ── Esperar selector con timeout ────────────────────────────────────
-async function waitFor(page: import('puppeteer').Page, selector: string, timeout = 15000): Promise<boolean> {
-  try {
-    await page.waitForSelector(selector, { timeout });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // ── Login SOL ───────────────────────────────────────────────────────
 async function loginSol(
   page: import('puppeteer').Page,
@@ -77,68 +67,29 @@ async function loginSol(
 ): Promise<boolean> {
   log('Navegando al portal SOL de SUNAT...');
 
-  // Ir directamente al login del portal e-factura
-  await page.goto('https://e-factura.sunat.gob.pe/', {
-    waitUntil: 'domcontentloaded',
+  // Ir al menú principal de SUNAT (igual que el código que funciona)
+  await page.goto('https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm', {
+    waitUntil: 'networkidle2',
     timeout: 30000,
   });
 
-  await new Promise(r => setTimeout(r, 3000));
-  log(`URL actual: ${page.url()}`);
+  // Esperar formulario de login
+  await page.waitForSelector('#txtRuc', { timeout: 10000 });
+  log('Formulario de login encontrado, ingresando credenciales...');
 
-  // Intentar encontrar el formulario de login
-  const loginSelectors = [
-    { ruc: '#txtRuc',      user: '#txtUsuario',  pass: '#txtContrasena', btn: '#btnAceptar' },
-    { ruc: '[name=txtRuc]', user: '[name=txtUsuario]', pass: '[name=txtContrasena]', btn: '[type=submit]' },
-  ];
-
-  for (const sel of loginSelectors) {
-    const rucEl = await page.$(sel.ruc);
-    if (!rucEl) continue;
-
-    log('Formulario de login encontrado, ingresando credenciales...');
-    await rucEl.click({ clickCount: 3 });
-    await rucEl.type(ruc, { delay: 80 });
-
-    const userEl = await page.$(sel.user);
-    if (userEl) { await userEl.click({ clickCount: 3 }); await userEl.type(solUser, { delay: 80 }); }
-
-    const passEl = await page.$(sel.pass);
-    if (passEl) { await passEl.click({ clickCount: 3 }); await passEl.type(solPass, { delay: 80 }); }
-
-    const btnEl = await page.$(sel.btn);
-    if (btnEl) {
-      await btnEl.click();
-      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-      await new Promise(r => setTimeout(r, 2000));
-    }
-    break;
-  }
-
-  const urlAfter = page.url();
-  log(`URL post-login: ${urlAfter}`);
-
-  // Verificar si hay error de login
-  const pageText = await page.evaluate(() => document.body?.innerText || '');
-  if (pageText.toLowerCase().includes('contraseña incorrecta') ||
-      pageText.toLowerCase().includes('usuario incorrecto') ||
-      pageText.toLowerCase().includes('datos incorrectos')) {
-    log('Error: credenciales incorrectas');
-    return false;
-  }
-
-  // Si redirigió fuera del login, asumimos éxito
-  if (!urlAfter.includes('login') && !urlAfter.includes('Login')) {
-    log('Login exitoso');
-    return true;
-  }
-
-  // Verificar si hay elementos post-login
-  const loggedIn = await waitFor(page, '.menu, nav, .navbar, #menu, [class*="menu"]', 5000);
-  if (loggedIn) { log('Login exitoso (menú detectado)'); return true; }
-
-  log('Login posiblemente exitoso (sin confirmación clara)');
-  return true; // Intentar continuar de todas formas
+  // Llenar credenciales
+  await page.type('#txtRuc', ruc, { delay: 80 });
+  await page.type('#txtUsuario', solUser, { delay: 80 });
+  await page.type('#txtContrasena', solPass, { delay: 80 });
+  
+  // Click en aceptar
+  await page.click('#btnAceptar');
+  
+  // Esperar que cargue el menú principal
+  await page.waitForSelector('#divContainerMenu', { timeout: 15000 });
+  
+  log('Login exitoso');
+  return true;
 }
 
 // ── Navegar y descargar XMLs de comprobantes recibidos ──────────────
@@ -174,149 +125,120 @@ async function downloadReceivedXmls(
     } catch {}
   });
 
-  // Navegar al módulo de comprobantes recibidos
-  log('Navegando a Mis Comprobantes Recibidos...');
-
-  const moduleUrls = [
-    `https://e-factura.sunat.gob.pe/ol-ti-itconsultaunificadalibre/consultaUnificadaLibre/consulta/comprobante`,
-    `https://ww1.sunat.gob.pe/ol-ti-itconsultaunificadalibre/consultaUnificadaLibre/consulta/comprobante`,
-    `https://e-factura.sunat.gob.pe/`,
-  ];
-
-  let pageLoaded = false;
-  for (const url of moduleUrls) {
-    try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await new Promise(r => setTimeout(r, 2000));
-      const found = await waitFor(page, 'select, input, form, table', 5000);
-      if (found) {
-        log(`Módulo cargado: ${url.substring(0, 70)}`);
-        pageLoaded = true;
-        break;
-      }
-    } catch (e) {
-      log(`Error navegando a ${url.substring(0, 50)}: ${(e as Error).message}`);
+  // ============================================
+  // NAVEGACIÓN POR MENÚ (igual que código que funciona)
+  // ============================================
+  
+  // PASO 1: Click en "Empresas" (data-id="2")
+  log('Click en Empresas...');
+  await page.evaluate(() => {
+    const empresasDiv = document.querySelector('div[data-id="2"]') as HTMLElement
+      || document.querySelector('#divOpcionServicio2') as HTMLElement;
+    
+    if (empresasDiv) {
+      empresasDiv.click();
+      return true;
     }
-  }
-
-  if (!pageLoaded) {
-    log('No se pudo cargar el módulo de comprobantes');
-    return results;
-  }
-
-  // Tomar screenshot para diagnóstico
-  log(`Página actual: ${page.url()}`);
-  const pageTitle = await page.title();
-  log(`Título: ${pageTitle}`);
-
-  // Intentar filtrar por período
-  log(`Buscando comprobantes del período ${year}-${month}...`);
-
-  // Buscar y llenar campos de fecha/período
-  const allSelects = await page.$$('select');
-  log(`Selects encontrados: ${allSelects.length}`);
-
-  for (const sel of allSelects) {
-    try {
-      const opts = await page.evaluate(el => Array.from(el.options).map(o => ({ v: o.value, t: o.text })), sel);
-      const yearOpt = opts.find(o => o.v === year || o.t === year);
-      const monthOpt = opts.find(o => o.v === month || o.v === String(parseInt(month)));
-      if (yearOpt) {
-        await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); }, sel, yearOpt.v);
-        log(`Año seleccionado: ${year}`);
-      } else if (monthOpt) {
-        await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); }, sel, monthOpt.v);
-        log(`Mes seleccionado: ${month}`);
-      }
-    } catch {}
-  }
-
-  // Buscar inputs de fecha
-  const dateInputs = await page.$$('input[type="date"], input[type="text"][name*="fecha"], input[name*="Fecha"]');
-  if (dateInputs.length > 0) {
-    const fechaInicio = `01/${month}/${year}`;
-    const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
-    const fechaFin = `${lastDay}/${month}/${year}`;
-    try {
-      await dateInputs[0].click({ clickCount: 3 });
-      await dateInputs[0].type(fechaInicio);
-      if (dateInputs[1]) {
-        await dateInputs[1].click({ clickCount: 3 });
-        await dateInputs[1].type(fechaFin);
-      }
-      log(`Fechas ingresadas: ${fechaInicio} - ${fechaFin}`);
-    } catch {}
-  }
-
-  // Click en buscar
-  const searchBtns = ['#btnBuscar', 'button[type="submit"]', '.btn-primary', 'input[value="Buscar"]', 'button:contains("Buscar")'];
-  for (const sel of searchBtns) {
-    try {
-      const btn = await page.$(sel);
-      if (btn) {
-        await btn.click();
-        log('Botón buscar clickeado');
-        await new Promise(r => setTimeout(r, 3000));
-        break;
-      }
-    } catch {}
-  }
-
-  // Esperar resultados
-  await waitFor(page, 'table tbody tr, .resultado, [class*="result"]', 10000);
+    
+    // Fallback: buscar por texto
+    const allDivs = Array.from(document.querySelectorAll('div.list-group-item'));
+    const empresasItem = allDivs.find(d => {
+      const h4 = d.querySelector('h4');
+      return h4?.textContent?.trim().toLowerCase().includes('empresa');
+    }) as HTMLElement;
+    
+    if (empresasItem) {
+      empresasItem.click();
+      return true;
+    }
+    
+    return false;
+  });
   await new Promise(r => setTimeout(r, 2000));
+  log('Empresas seleccionado');
 
-  // Contar filas
-  const rowCount = await page.$$eval('table tbody tr', rows => rows.length).catch(() => 0);
-  log(`Filas en tabla: ${rowCount}`);
+  // PASO 2: Click 1 - Comprobantes de pago (data-id2="11")
+  log('Navegando menú: Comprobantes de pago...');
+  await page.evaluate(() => {
+    const el = document.querySelector('li[data-id2="11"] span.spanNivelDescripcion') as HTMLElement
+      || Array.from(document.querySelectorAll('span.spanNivelDescripcion'))
+        .find(s => s.textContent?.trim() === 'Comprobantes de pago') as HTMLElement;
+    if (el) el.click();
+  });
+  await new Promise(r => setTimeout(r, 1500));
 
-  // Intentar descargar XMLs de cada fila
-  let processed = 0;
-  for (let i = 0; i < Math.min(rowCount, maxDocs); i++) {
+  // PASO 3: Click 2 - Comprobantes de Pago nivel 2 (data-id2="11_38")
+  log('Navegando menú: Comprobantes de Pago (nivel 2)...');
+  await page.evaluate(() => {
+    const el = document.querySelector('li[data-id2="11_38"] span.spanNivelDescripcion') as HTMLElement
+      || Array.from(document.querySelectorAll('span.spanNivelDescripcion'))
+        .filter(s => s.textContent?.trim().toLowerCase() === 'comprobantes de pago')[1] as HTMLElement;
+    if (el) el.click();
+  });
+  await new Promise(r => setTimeout(r, 1500));
+
+  // PASO 4: Click 3 - Consulta de Comprobantes de Pago (data-id2="11_38_1")
+  log('Navegando menú: Consulta de Comprobantes de Pago...');
+  await page.evaluate(() => {
+    const el = document.querySelector('li[data-id2="11_38_1"] span.spanNivelDescripcion') as HTMLElement
+      || Array.from(document.querySelectorAll('span.spanNivelDescripcion'))
+        .find(s => s.textContent?.trim() === 'Consulta de Comprobantes de Pago') as HTMLElement;
+    if (el) el.click();
+  });
+  await new Promise(r => setTimeout(r, 1500));
+
+  // PASO 5: Click 4 - Nueva Consulta de comprobantes de pago (data-id2="11_38_1_1")
+  log('Navegando menú: Nueva Consulta de comprobantes de pago...');
+  await page.evaluate(() => {
+    const el = document.querySelector('li[data-id2="11_38_1_1"] span.spanNivelDescripcion') as HTMLElement
+      || Array.from(document.querySelectorAll('span.spanNivelDescripcion'))
+        .find(s => s.textContent?.trim() === 'Nueva Consulta de comprobantes de pago') as HTMLElement;
+    if (el) el.click();
+  });
+  await new Promise(r => setTimeout(r, 4000));
+  log('Formulario de consulta cargado');
+
+  // ============================================
+  // BUSCAR FORMULARIO EN IFRAME
+  // ============================================
+  log('Buscando formulario Angular en iframe...');
+  let targetFrame = page.mainFrame();
+  
+  for (const frame of page.frames()) {
     try {
-      const rows = await page.$$('table tbody tr');
-      if (i >= rows.length) break;
-
-      const row = rows[i];
-      const cells = await row.$$eval('td', tds => tds.map(td => td.textContent?.trim() || ''));
-      log(`Fila ${i + 1}: ${cells.slice(0, 5).join(' | ')}`);
-
-      // Buscar botón/link de descarga XML
-      const xmlLink = await row.$('a[href*="xml"], a[title*="XML"], button[title*="XML"], [onclick*="xml"]');
-      if (xmlLink) {
-        // Capturar nueva pestaña o descarga
-        const [popup] = await Promise.all([
-          new Promise<import('puppeteer').Page | null>(resolve => {
-            const timeout = setTimeout(() => resolve(null), 5000);
-            page.once('popup', p => { clearTimeout(timeout); resolve(p); });
-          }),
-          xmlLink.click(),
-        ]);
-
-        if (popup) {
-          await new Promise(r => setTimeout(r, 2000));
-          const content = await popup.content();
-          if (content.includes('<?xml') || content.includes('<Invoice')) {
-            // Extraer serie y número de las celdas
-            const serieNum = cells.find(c => /[A-Z]\d{3}-\d+/.test(c)) || '';
-            const [serie, numero] = serieNum.split('-');
-            results.push({
-              docId: serieNum,
-              serie: serie || `DOC${i}`,
-              numero: numero || String(i),
-              tipo: '01',
-              xmlContent: content,
-            });
-            log(`XML obtenido: ${serieNum}`);
-          }
-          await popup.close().catch(() => {});
-        }
-        processed++;
+      const hasForm = await frame.evaluate(() =>
+        !!(document.querySelector('input[formcontrolname="rucEmisor"]') ||
+           document.querySelector('input[name="rucEmisor"]'))
+      );
+      if (hasForm) {
+        targetFrame = frame;
+        break;
       }
-    } catch (e) {
-      log(`Error en fila ${i}: ${(e as Error).message}`);
-    }
+    } catch {}
   }
+  
+  log(`Frame encontrado: ${targetFrame.url()}`);
+
+  // ============================================
+  // SELECCIONAR "RECIBIDO"
+  // ============================================
+  log('Seleccionando filtro "Recibido"...');
+  await targetFrame.evaluate(() => {
+    const radio = document.querySelector('input[type="radio"][value="RBR"]') as HTMLInputElement
+      || document.querySelector('input[id="recibido"]') as HTMLInputElement;
+    if (radio) {
+      radio.click();
+      radio.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+  await new Promise(r => setTimeout(r, 1000));
+
+  // ============================================
+  // NOTA: El formulario está listo para consultas individuales
+  // ============================================
+  log(`Formulario listo para consultas de comprobantes del período ${year}-${month}`);
+  log('NOTA: Este módulo está configurado para consultas individuales por RUC/Serie/Número');
+  log('Para descarga masiva por período, usar SIRE API o CPE API cuando estén disponibles');
 
   // Si no obtuvimos XMLs via clicks, usar los interceptados
   if (results.length === 0 && interceptedXmls.length > 0) {
