@@ -294,7 +294,9 @@ export async function downloadXmlFromSunat(
       throw new Error('No se pudo capturar el contenido XML');
     }
 
-    console.log(`[SCRAPER] ✅ XML descargado exitosamente (${xmlContent.length} bytes)`);
+    // En este punto xmlContent es definitivamente string (no null)
+    const xmlSize = xmlContent.length;
+    console.log(`[SCRAPER] ✅ XML descargado exitosamente (${xmlSize} bytes)`);
 
     return { xmlContent };
   } catch (error) {
