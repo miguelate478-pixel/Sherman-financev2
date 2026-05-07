@@ -249,7 +249,6 @@ export async function POST(req: NextRequest) {
                       rucEmisor: doc.rucEmisor,
                       serie: doc.serie,
                       numero: doc.numero,
-                      tipoComprobante: doc.tipo,
                     }
                   );
 
