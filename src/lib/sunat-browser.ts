@@ -24,58 +24,40 @@ export interface BrowserDownloadOptions {
 
 // ── Encontrar el ejecutable de Chromium disponible ──────────────────
 async function findChromiumExecutable(): Promise<string> {
-  const { execSync } = await import('child_process');
   const { existsSync } = await import('fs');
 
   // 1. Variable de entorno explícita (configurada en Dockerfile y Railway)
-  if (process.env.CHROMIUM_PATH && existsSync(process.env.CHROMIUM_PATH)) {
+  if (process.env.CHROMIUM_PATH) {
     console.log('[BROWSER] Chromium via env CHROMIUM_PATH:', process.env.CHROMIUM_PATH);
     return process.env.CHROMIUM_PATH;
   }
 
-  // 2. Rutas fijas comunes en Debian/Ubuntu (node:22-slim)
+  // 2. Rutas fijas comunes en Debian/Ubuntu (node:22-slim con Dockerfile)
   const fixed = [
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable',
-    '/usr/local/bin/chromium',
-    '/snap/bin/chromium',
-    '/opt/google/chrome/chrome',
-    '/opt/chromium/chromium',
   ];
+  
   for (const p of fixed) {
     if (existsSync(p)) {
-      console.log('[BROWSER] Chromium en ruta fija:', p);
+      console.log('[BROWSER] Chromium encontrado en:', p);
       return p;
     }
   }
 
-  // 3. which
-  const whichCmds = ['which chromium', 'which chromium-browser', 'which google-chrome'];
-  for (const cmd of whichCmds) {
-    try {
-      const p = execSync(cmd, { timeout: 3000, encoding: 'utf8' }).trim();
-      if (p && existsSync(p)) {
-        console.log('[BROWSER] Chromium via which:', p);
-        return p;
-      }
-    } catch {}
+  // 3. Último recurso: @sparticuz/chromium
+  try {
+    const chromium = await import('@sparticuz/chromium');
+    const path = await chromium.default.executablePath();
+    console.log('[BROWSER] Usando @sparticuz/chromium:', path);
+    return path;
+  } catch (e) {
+    console.error('[BROWSER] Error cargando @sparticuz/chromium:', (e as Error).message);
   }
 
-  // 4. Buscar en /nix/store (nixpacks legacy)
-  try {
-    const nixResult = execSync(
-      'find /nix -name "chromium" -type f 2>/dev/null | grep -v ".drv" | head -1',
-      { timeout: 5000, encoding: 'utf8' }
-    ).trim();
-    if (nixResult) {
-      console.log('[BROWSER] Chromium en Nix:', nixResult);
-      return nixResult;
-    }
-  } catch {}
-
-  throw new Error('Chromium no encontrado. Configura CHROMIUM_PATH o usa el Dockerfile incluido.');
+  throw new Error('Chromium no encontrado. Verifica que el Dockerfile instaló Chromium correctamente.');
 }
 
 // ── Lanzar browser ──────────────────────────────────────────────────
