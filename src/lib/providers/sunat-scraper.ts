@@ -86,6 +86,8 @@ export async function downloadXmlFromSunat(
         if (hasForm) { targetFrame = frame; break; }
       } catch { /* frame no accesible */ }
     }
+    
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Frame encontrado: ${targetFrame.url()}`);
 
     // CLICK RECIBIDO
     await targetFrame.evaluate(() => {
@@ -94,8 +96,10 @@ export async function downloadXmlFromSunat(
       r?.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await new Promise(r => setTimeout(r, 1000));
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Filtro "Recibido" seleccionado`);
 
     // RUC EMISOR
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Llenando RUC Emisor: ${factura.rucEmisor}`);
     await targetFrame.evaluate((ruc: string) => {
       const input = document.querySelector('input[formcontrolname="rucEmisor"]') as HTMLInputElement;
       if (!input) return;
@@ -108,6 +112,7 @@ export async function downloadXmlFromSunat(
     await new Promise(r => setTimeout(r, 800));
 
     // DROPDOWN TIPO COMPROBANTE
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Seleccionando tipo Factura`);
     await targetFrame.evaluate(() => {
       const trigger = document.querySelector('div[role="button"][aria-haspopup="listbox"], p-dropdown div.p-dropdown-trigger') as HTMLElement;
       trigger?.click();
@@ -122,6 +127,7 @@ export async function downloadXmlFromSunat(
     await new Promise(r => setTimeout(r, 800));
 
     // SERIE
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Llenando Serie: ${factura.serie}`);
     await targetFrame.evaluate((serie: string) => {
       const input = document.querySelector('input[formcontrolname="serieComprobante"]') as HTMLInputElement;
       if (!input) return;
@@ -134,6 +140,7 @@ export async function downloadXmlFromSunat(
     await new Promise(r => setTimeout(r, 500));
 
     // NÚMERO
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Llenando Número: ${factura.numero}`);
     await targetFrame.evaluate((numero: string) => {
       const input = document.querySelector('input[formcontrolname="numeroComprobante"]') as HTMLInputElement;
       if (!input) return;
@@ -146,15 +153,58 @@ export async function downloadXmlFromSunat(
     await new Promise(r => setTimeout(r, 500));
 
     // CONSULTAR
-    await targetFrame.evaluate(() => {
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Haciendo click en Consultar...`);
+    const btnClicked = await targetFrame.evaluate(() => {
       const btn = document.querySelector('button.btn.boton-primary') as HTMLElement 
         || (Array.from(document.querySelectorAll('button')).find(b => b.textContent?.trim().toLowerCase().includes('consultar')) as HTMLElement);
-      btn?.click();
+      if (btn) {
+        btn.click();
+        return true;
+      }
+      return false;
     });
+    
+    if (!btnClicked) {
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: No se encontró botón Consultar`);
+      return { xmlContent: null, error: 'Botón Consultar no encontrado' };
+    }
+    
     await new Promise(r => setTimeout(r, 5000));
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Esperando modal...`);
 
-    // ESPERAR MODAL
-    await targetFrame.waitForSelector('ngb-modal-window, control-cpe-factura', { timeout: 10000 });
+    // VERIFICAR SI HAY MENSAJE DE ERROR O NO ENCONTRADO
+    const hasError = await targetFrame.evaluate(() => {
+      const errorMsg = document.body.textContent || '';
+      return errorMsg.toLowerCase().includes('no se encontr') || 
+             errorMsg.toLowerCase().includes('no existe') ||
+             errorMsg.toLowerCase().includes('sin resultado');
+    });
+    
+    if (hasError) {
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Comprobante no encontrado en SUNAT`);
+      return { xmlContent: null, error: 'Comprobante no encontrado en SUNAT' };
+    }
+
+    // ESPERAR MODAL (aumentar timeout a 15 segundos)
+    try {
+      await targetFrame.waitForSelector('ngb-modal-window, control-cpe-factura, .modal-dialog', { timeout: 15000 });
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Modal encontrado`);
+    } catch (e) {
+      // Tomar screenshot para diagnóstico
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Modal no apareció, verificando contenido...`);
+      const pageContent = await targetFrame.evaluate(() => {
+        return {
+          title: document.title,
+          bodyText: document.body.textContent?.substring(0, 500),
+          hasModal: !!document.querySelector('ngb-modal-window, control-cpe-factura, .modal-dialog'),
+          hasTable: !!document.querySelector('table'),
+          hasError: !!document.querySelector('.alert-danger, .error-message'),
+        };
+      });
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Diagnóstico:`, JSON.stringify(pageContent));
+      throw e;
+    }
+    
     await new Promise(r => setTimeout(r, 2000));
 
     // INTERCEPTAR XML AL HACER CLICK EN BOTÓN XML
