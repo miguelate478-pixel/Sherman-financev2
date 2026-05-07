@@ -76,59 +76,54 @@ export async function downloadXmlFromSunat(
     });
     await new Promise(r => setTimeout(r, 8000)); // Aumentado para dar tiempo a que cargue el formulario Angular
 
-    // El formulario carga en el mainFrame, no en iframe
-    // Solo necesitamos esperar que Angular cargue el componente
-    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Esperando formulario Angular...`);
+    // Esperar que el iframe ifrVCE tenga un src cargado
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Esperando que iframe ifrVCE cargue...`);
     
-    let formFound = false;
-    for (let attempt = 0; attempt < 30; attempt++) {
-      await new Promise(r => setTimeout(r, 1000));
-      
-      try {
-        formFound = await page.mainFrame().evaluate(() => {
-          // Buscar el input de RUC que aparece cuando carga el formulario
-          return !!(
-            document.querySelector('input[formcontrolname="rucEmisor"]') ||
-            document.querySelector('input[name="rucEmisor"]') ||
-            // También puede estar en un shadow DOM
-            document.querySelector('control-cpe-consulta input') ||
-            document.querySelector('app-nueva-consulta input')
-          );
-        });
-        
-        if (formFound) {
-          console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Formulario encontrado en intento ${attempt + 1}`);
-          break;
-        }
-        
-        // Cada 5 intentos, loguear qué hay en el DOM para debug
-        if (attempt % 5 === 4) {
-          const domInfo = await page.mainFrame().evaluate(() => {
-            const inputs = Array.from(document.querySelectorAll('input')).map(i => ({
-              name: i.name,
-              formcontrolname: i.getAttribute('formcontrolname'),
-              type: i.type,
-              id: i.id,
-            }));
-            return {
-              inputCount: inputs.length,
-              inputs: inputs.slice(0, 5),
-              bodyPreview: document.body.innerHTML.substring(0, 200),
-            };
-          });
-          console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: DOM intento ${attempt + 1}:`, JSON.stringify(domInfo));
-        }
-      } catch (e) {
-        console.log(`[SCRAPER] intento ${attempt + 1} error:`, (e as Error).message);
+    await page.waitForFunction(
+      () => {
+        const iframe = document.querySelector('#ifrVCE') as HTMLIFrameElement;
+        return iframe && iframe.src && iframe.src !== '' && iframe.src !== 'about:blank';
+      },
+      { timeout: 15000 }
+    );
+    
+    const ifrSrc = await page.evaluate(() => {
+      return (document.querySelector('#ifrVCE') as HTMLIFrameElement)?.src;
+    });
+    
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: ifrVCE src: ${ifrSrc}`);
+    await new Promise(r => setTimeout(r, 3000));
+    
+    // Buscar el frame por src
+    let targetFrame = page.mainFrame();
+    for (const frame of page.frames()) {
+      if (frame.url() === ifrSrc || frame.url().includes('ifrVCE') || frame.name() === 'ifrVCE') {
+        targetFrame = frame;
+        console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Frame ifrVCE encontrado: ${frame.url()}`);
+        break;
       }
     }
     
-    if (!formFound) {
-      return { xmlContent: null, error: 'Formulario Angular no cargó en 30 segundos' };
-    }
+    // Verificar que tiene el formulario
+    const hasForm = await targetFrame.evaluate(() => 
+      !!(document.querySelector('input[formcontrolname="rucEmisor"]'))
+    ).catch(() => false);
     
-    // Usar mainFrame para todo
-    const targetFrame = page.mainFrame();
+    if (!hasForm) {
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: ifrVCE no tiene el formulario, buscando en todos los frames...`);
+      for (const frame of page.frames()) {
+        try {
+          const found = await frame.evaluate(() => 
+            !!(document.querySelector('input[formcontrolname="rucEmisor"]'))
+          );
+          if (found) {
+            targetFrame = frame;
+            console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Formulario encontrado en: ${frame.url()}`);
+            break;
+          }
+        } catch {}
+      }
+    }
 
     // CLICK RECIBIDO
     await targetFrame.evaluate(() => {
