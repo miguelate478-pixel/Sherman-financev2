@@ -37,20 +37,44 @@ export async function downloadXmlFromSunat(
     await page.waitForSelector('#divContainerMenu', { timeout: 15000 });
     console.log('[SCRAPER] Login OK');
 
-    // INTERCEPTAR JWT TOKEN
+    // INTERCEPTAR JWT TOKEN - MÚLTIPLES ESTRATEGIAS
     let formToken: string | null = null;
+
+    // Estrategia 1: Interceptar responses JSON que contengan token
+    page.on('response', async response => {
+      const url = response.url();
+      if (url.includes('sunat.gob.pe') && !formToken) {
+        try {
+          const ct = response.headers()['content-type'] || '';
+          if (ct.includes('json')) {
+            const text = await response.text();
+            const data = JSON.parse(text);
+            // El token puede estar en diferentes campos
+            const token = data?.token || data?.access_token || data?.data?.token || data?.idToken;
+            if (token && token.includes('.')) {
+              // JWT tiene puntos
+              formToken = token;
+              console.log('[SCRAPER] Token desde response JSON capturado');
+            }
+          }
+        } catch {}
+      }
+    });
+
+    // Estrategia 2: Interceptar redirects que contengan el token en URL
     page.on('request', request => {
       const url = request.url();
-      if (url.includes('nuevaconsulta.html') && url.includes('token=')) {
-        const match = url.match(/token=([^&]+)/);
+      if (url.includes('nuevaconsulta') && url.includes('token=')) {
+        const match = url.match(/[?&]token=([^&]+)/);
         if (match) {
           formToken = match[1];
-          console.log('[SCRAPER] JWT capturado');
+          console.log('[SCRAPER] Token desde URL de request capturado');
         }
       }
     });
 
     // CLICKS MENÚ PARA QUE SUNAT GENERE EL TOKEN
+    console.log('[SCRAPER] Haciendo clicks en el menú...');
     await page.evaluate(() => {
       (document.querySelector('div[data-id="2"]') as HTMLElement)?.click();
     });
@@ -81,15 +105,38 @@ export async function downloadXmlFromSunat(
       (document.querySelector('li[data-id2="11_38_1_1"] span.spanNivelDescripcion') as HTMLElement)?.click();
     });
 
-    // ESPERAR TOKEN (hasta 15 segundos)
-    for (let i = 0; i < 15; i++) {
-      await new Promise(r => setTimeout(r, 1000));
-      if (formToken) break;
-      console.log(`[SCRAPER] Esperando token... ${i + 1}/15`);
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Estrategia 3: Buscar token en sessionStorage/localStorage
+    if (!formToken) {
+      console.log('[SCRAPER] Buscando token en storage...');
+      const solToken = await page.evaluate(() => {
+        return (
+          sessionStorage.getItem('SUNAT.token') ||
+          sessionStorage.getItem('token') ||
+          localStorage.getItem('SUNAT.token') ||
+          localStorage.getItem('token')
+        );
+      });
+      if (solToken) {
+        formToken = solToken;
+        console.log('[SCRAPER] Token desde sessionStorage:', solToken.substring(0, 30));
+      }
     }
 
+    // Debug: Log todos los frames y sus URLs
+    const allFrames = page.frames().map(f => ({ url: f.url(), name: f.name() }));
+    console.log('[SCRAPER] Frames actuales:', JSON.stringify(allFrames));
+
+    // Debug: Log el iframe ifrVCE src actual
+    const ifrSrc = await page.evaluate(() => {
+      const ifr = document.querySelector('#ifrVCE') as HTMLIFrameElement;
+      return { src: ifr?.src, contentSrc: ifr?.contentWindow?.location?.href };
+    });
+    console.log('[SCRAPER] ifrVCE estado:', JSON.stringify(ifrSrc));
+
     if (!formToken) {
-      return { xmlContent: null, error: 'JWT token no capturado' };
+      return { xmlContent: null, error: 'JWT token no capturado - ver logs para debug' };
     }
 
     // NAVEGAR DIRECTO AL FORMULARIO CON TOKEN
