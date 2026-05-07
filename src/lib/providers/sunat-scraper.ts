@@ -17,59 +17,34 @@ export async function downloadXmlFromSunat(
   creds: ScraperCredentials,
   factura: FacturaQuery
 ): Promise<{ xmlContent: string | null; error?: string }> {
-  // Prioridad de búsqueda de Chromium:
-  // 1. Variable de entorno CHROMIUM_PATH (desarrollo local o Dockerfile)
-  // 2. Chromium del sistema en rutas conocidas (Railway con Dockerfile)
-  // 3. @sparticuz/chromium como último recurso (serverless sin Dockerfile)
-  
+  // En desarrollo local: usar CHROMIUM_PATH del .env
+  // En producción (Railway): usar @sparticuz/chromium
   let chromiumPath: string;
   
   if (process.env.CHROMIUM_PATH) {
-    // Desarrollo local o configurado explícitamente
     chromiumPath = process.env.CHROMIUM_PATH;
-    console.log(`[SCRAPER] Usando CHROMIUM_PATH: ${chromiumPath}`);
+    console.log(`[SCRAPER] Usando CHROMIUM_PATH local: ${chromiumPath}`);
   } else {
-    // Buscar en rutas del sistema (Railway con Dockerfile)
-    const systemPaths = [
-      '/usr/bin/chromium',
-      '/usr/bin/chromium-browser',
-      '/usr/bin/google-chrome',
-      '/usr/bin/google-chrome-stable',
-    ];
-    
-    const fs = await import('fs');
-    const foundPath = systemPaths.find(p => {
-      try {
-        return fs.existsSync(p);
-      } catch {
-        return false;
-      }
-    });
-    
-    if (foundPath) {
-      chromiumPath = foundPath;
-      console.log(`[SCRAPER] Chromium del sistema encontrado: ${chromiumPath}`);
-    } else {
-      // Último recurso: @sparticuz/chromium
-      chromiumPath = await chromium.executablePath();
-      console.log(`[SCRAPER] Usando @sparticuz/chromium: ${chromiumPath}`);
-    }
+    chromiumPath = await chromium.executablePath();
+    console.log(`[SCRAPER] Usando @sparticuz/chromium: ${chromiumPath}`);
   }
 
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
 
   try {
+    const args = process.env.CHROMIUM_PATH 
+      ? [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+        ]
+      : chromium.args;
+
     browser = await puppeteer.launch({
       executablePath: chromiumPath,
       headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-software-rasterizer',
-        '--disable-extensions',
-      ],
+      args,
     });
 
     const page = await browser.newPage();

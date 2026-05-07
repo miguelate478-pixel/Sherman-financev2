@@ -24,40 +24,18 @@ export interface BrowserDownloadOptions {
 
 // ── Encontrar el ejecutable de Chromium disponible ──────────────────
 async function findChromiumExecutable(): Promise<string> {
-  const { existsSync } = await import('fs');
-
-  // 1. Variable de entorno explícita (configurada en Dockerfile y Railway)
+  // En desarrollo local: usar CHROMIUM_PATH
   if (process.env.CHROMIUM_PATH) {
-    console.log('[BROWSER] Chromium via env CHROMIUM_PATH:', process.env.CHROMIUM_PATH);
+    console.log('[BROWSER] Usando CHROMIUM_PATH local:', process.env.CHROMIUM_PATH);
     return process.env.CHROMIUM_PATH;
   }
 
-  // 2. Rutas fijas comunes en Debian/Ubuntu (node:22-slim con Dockerfile)
-  const fixed = [
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-  ];
-  
-  for (const p of fixed) {
-    if (existsSync(p)) {
-      console.log('[BROWSER] Chromium encontrado en:', p);
-      return p;
-    }
-  }
-
-  // 3. Último recurso: @sparticuz/chromium
-  try {
-    const chromium = await import('@sparticuz/chromium');
-    const path = await chromium.default.executablePath();
-    console.log('[BROWSER] Usando @sparticuz/chromium:', path);
-    return path;
-  } catch (e) {
-    console.error('[BROWSER] Error cargando @sparticuz/chromium:', (e as Error).message);
-  }
-
-  throw new Error('Chromium no encontrado. Verifica que el Dockerfile instaló Chromium correctamente.');
+  // En producción (Railway): usar @sparticuz/chromium
+  console.log('[BROWSER] Cargando @sparticuz/chromium para Railway...');
+  const chromium = await import('@sparticuz/chromium');
+  const path = await chromium.default.executablePath();
+  console.log('[BROWSER] Chromium de @sparticuz:', path);
+  return path;
 }
 
 // ── Lanzar browser ──────────────────────────────────────────────────
