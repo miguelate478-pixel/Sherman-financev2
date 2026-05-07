@@ -1,32 +1,22 @@
 import puppeteer from 'puppeteer';
 
-export interface ScraperCredentials {
-  ruc: string;
-  solUser: string;
-  solPass: string;
-}
-
-export interface FacturaQuery {
-  rucEmisor: string;
-  serie: string;
-  numero: string;
-}
-
 export async function downloadXmlFromSunat(
-  creds: ScraperCredentials,
-  factura: FacturaQuery
+  creds: {
+    ruc: string;
+    solUser: string;
+    solPass: string;
+  },
+  factura: {
+    rucEmisor: string;
+    serie: string;
+    numero: string;
+  }
 ): Promise<{ xmlContent: string | null; error?: string }> {
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
-
+  let browser;
   try {
     browser = await puppeteer.launch({
       headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
     });
 
     const page = await browser.newPage();
@@ -35,22 +25,37 @@ export async function downloadXmlFromSunat(
     );
 
     // LOGIN
-    await page.goto('https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm', 
-      { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.goto('https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm', {
+      waitUntil: 'networkidle2',
+      timeout: 30000,
+    });
     await page.waitForSelector('#txtRuc', { timeout: 10000 });
     await page.type('#txtRuc', creds.ruc, { delay: 50 });
     await page.type('#txtUsuario', creds.solUser, { delay: 50 });
     await page.type('#txtContrasena', creds.solPass, { delay: 50 });
     await page.click('#btnAceptar');
     await page.waitForSelector('#divContainerMenu', { timeout: 15000 });
+    console.log('[SCRAPER] Login OK');
 
-    // CLICK EMPRESAS (data-id="2")
+    // INTERCEPTAR JWT TOKEN
+    let formToken: string | null = null;
+    page.on('request', request => {
+      const url = request.url();
+      if (url.includes('nuevaconsulta.html') && url.includes('token=')) {
+        const match = url.match(/token=([^&]+)/);
+        if (match) {
+          formToken = match[1];
+          console.log('[SCRAPER] JWT capturado');
+        }
+      }
+    });
+
+    // CLICKS MENÚ PARA QUE SUNAT GENERE EL TOKEN
     await page.evaluate(() => {
       (document.querySelector('div[data-id="2"]') as HTMLElement)?.click();
     });
     await new Promise(r => setTimeout(r, 2000));
 
-    // NAVEGACIÓN 4 CLICKS
     await page.evaluate(() => {
       (document.querySelector('li[data-id2="11"] span.spanNivelDescripcion') as HTMLElement)?.click();
     });
@@ -58,8 +63,9 @@ export async function downloadXmlFromSunat(
 
     await page.evaluate(() => {
       const spans = Array.from(document.querySelectorAll('span.spanNivelDescripcion'));
-      const matches = spans.filter((s): s is HTMLElement => 
-        s instanceof HTMLElement && s.textContent?.trim().toLowerCase() === 'comprobantes de pago'
+      const matches = spans.filter(
+        (s): s is HTMLElement =>
+          s instanceof HTMLElement && s.textContent?.trim().toLowerCase() === 'comprobantes de pago'
       );
       if (matches.length > 1) matches[1].click();
       else matches[0]?.click();
@@ -74,59 +80,32 @@ export async function downloadXmlFromSunat(
     await page.evaluate(() => {
       (document.querySelector('li[data-id2="11_38_1_1"] span.spanNivelDescripcion') as HTMLElement)?.click();
     });
-    await new Promise(r => setTimeout(r, 8000)); // Aumentado para dar tiempo a que cargue el formulario Angular
 
-    // Esperar que el iframe ifrVCE tenga un src cargado
-    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Esperando que iframe ifrVCE cargue...`);
-    
-    await page.waitForFunction(
-      () => {
-        const iframe = document.querySelector('#ifrVCE') as HTMLIFrameElement;
-        return iframe && iframe.src && iframe.src !== '' && iframe.src !== 'about:blank';
-      },
-      { timeout: 15000 }
-    );
-    
-    const ifrSrc = await page.evaluate(() => {
-      return (document.querySelector('#ifrVCE') as HTMLIFrameElement)?.src;
-    });
-    
-    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: ifrVCE src: ${ifrSrc}`);
+    // ESPERAR TOKEN (hasta 15 segundos)
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      if (formToken) break;
+      console.log(`[SCRAPER] Esperando token... ${i + 1}/15`);
+    }
+
+    if (!formToken) {
+      return { xmlContent: null, error: 'JWT token no capturado' };
+    }
+
+    // NAVEGAR DIRECTO AL FORMULARIO CON TOKEN
+    const formUrl = `https://e-factura.sunat.gob.pe/app/contribuyentems/servicio/consultacpe/consulta/loader/nuevaconsulta.html?token=${formToken}`;
+    console.log('[SCRAPER] Navegando al formulario con JWT...');
+    await page.goto(formUrl, { waitUntil: 'networkidle2', timeout: 30000 });
     await new Promise(r => setTimeout(r, 3000));
-    
-    // Buscar el frame por src
-    let targetFrame = page.mainFrame();
-    for (const frame of page.frames()) {
-      if (frame.url() === ifrSrc || frame.url().includes('ifrVCE') || frame.name() === 'ifrVCE') {
-        targetFrame = frame;
-        console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Frame ifrVCE encontrado: ${frame.url()}`);
-        break;
-      }
-    }
-    
-    // Verificar que tiene el formulario
-    const hasForm = await targetFrame.evaluate(() => 
-      !!(document.querySelector('input[formcontrolname="rucEmisor"]'))
-    ).catch(() => false);
-    
-    if (!hasForm) {
-      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: ifrVCE no tiene el formulario, buscando en todos los frames...`);
-      for (const frame of page.frames()) {
-        try {
-          const found = await frame.evaluate(() => 
-            !!(document.querySelector('input[formcontrolname="rucEmisor"]'))
-          );
-          if (found) {
-            targetFrame = frame;
-            console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Formulario encontrado en: ${frame.url()}`);
-            break;
-          }
-        } catch {}
-      }
-    }
+
+    // ESPERAR FORMULARIO ANGULAR
+    await page.waitForFunction(() => !!document.querySelector('input[formcontrolname="rucEmisor"]'), {
+      timeout: 15000,
+    });
+    console.log('[SCRAPER] Formulario Angular cargado');
 
     // CLICK RECIBIDO
-    await targetFrame.evaluate(() => {
+    await page.evaluate(() => {
       const r = document.querySelector('input[type="radio"][value="RBR"]') as HTMLInputElement;
       r?.click();
       r?.dispatchEvent(new Event('change', { bubbles: true }));
@@ -134,7 +113,7 @@ export async function downloadXmlFromSunat(
     await new Promise(r => setTimeout(r, 1000));
 
     // RUC EMISOR
-    await targetFrame.evaluate((ruc: string) => {
+    await page.evaluate((ruc: string) => {
       const input = document.querySelector('input[formcontrolname="rucEmisor"]') as HTMLInputElement;
       if (!input) return;
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
@@ -145,22 +124,21 @@ export async function downloadXmlFromSunat(
     }, factura.rucEmisor);
     await new Promise(r => setTimeout(r, 800));
 
-    // DROPDOWN TIPO COMPROBANTE
-    await targetFrame.evaluate(() => {
-      const trigger = document.querySelector('div[role="button"][aria-haspopup="listbox"], p-dropdown div.p-dropdown-trigger') as HTMLElement;
+    // DROPDOWN FACTURA
+    await page.evaluate(() => {
+      const trigger = document.querySelector('div[role="button"][aria-haspopup="listbox"]') as HTMLElement;
       trigger?.click();
     });
     await new Promise(r => setTimeout(r, 1000));
 
-    await targetFrame.evaluate(() => {
+    await page.evaluate(() => {
       const items = Array.from(document.querySelectorAll('li[role="option"], .p-dropdown-item'));
-      const f = items.find(i => i.textContent?.trim() === 'Factura') as HTMLElement;
-      f?.click();
+      (items.find(i => i.textContent?.trim() === 'Factura') as HTMLElement)?.click();
     });
     await new Promise(r => setTimeout(r, 800));
 
     // SERIE
-    await targetFrame.evaluate((serie: string) => {
+    await page.evaluate((serie: string) => {
       const input = document.querySelector('input[formcontrolname="serieComprobante"]') as HTMLInputElement;
       if (!input) return;
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
@@ -172,7 +150,7 @@ export async function downloadXmlFromSunat(
     await new Promise(r => setTimeout(r, 500));
 
     // NÚMERO
-    await targetFrame.evaluate((numero: string) => {
+    await page.evaluate((numero: string) => {
       const input = document.querySelector('input[formcontrolname="numeroComprobante"]') as HTMLInputElement;
       if (!input) return;
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
@@ -184,70 +162,60 @@ export async function downloadXmlFromSunat(
     await new Promise(r => setTimeout(r, 500));
 
     // CONSULTAR
-    const btnClicked = await targetFrame.evaluate(() => {
-      const btn = document.querySelector('button.btn.boton-primary') as HTMLElement 
-        || (Array.from(document.querySelectorAll('button')).find(b => b.textContent?.trim().toLowerCase().includes('consultar')) as HTMLElement);
-      if (btn) {
-        btn.click();
-        return true;
-      }
-      return false;
+    await page.evaluate(() => {
+      const btn =
+        (document.querySelector('button.btn.boton-primary') as HTMLElement) ||
+        (Array.from(document.querySelectorAll('button')).find(b =>
+          b.textContent?.trim().toLowerCase().includes('consultar')
+        ) as HTMLElement);
+      btn?.click();
     });
-    
-    if (!btnClicked) {
-      return { xmlContent: null, error: 'Botón Consultar no encontrado' };
-    }
-    
     await new Promise(r => setTimeout(r, 5000));
 
     // ESPERAR MODAL
-    try {
-      await targetFrame.waitForSelector('ngb-modal-window, control-cpe-factura, .modal-dialog', { timeout: 15000 });
-    } catch (e) {
-      return { xmlContent: null, error: 'Modal no apareció - comprobante no encontrado' };
-    }
-    
+    await page.waitForSelector('ngb-modal-window, control-cpe-factura', { timeout: 15000 });
     await new Promise(r => setTimeout(r, 2000));
+    console.log('[SCRAPER] Modal con factura abierto');
 
-    // INTERCEPTAR XML AL HACER CLICK EN BOTÓN XML
-    const xmlContent = await new Promise<string | null>((resolve) => {
+    // INTERCEPTAR XML
+    const xmlContent = await new Promise<string | null>(resolve => {
       const timeout = setTimeout(() => resolve(null), 15000);
 
-      page.on('response', async (response) => {
+      page.on('response', async response => {
         const url = response.url();
-        const contentType = response.headers()['content-type'] || '';
-        
-        if (url.includes('.xml') || contentType.includes('xml') || contentType.includes('octet-stream')) {
+        const ct = response.headers()['content-type'] || '';
+        if (url.includes('.xml') || ct.includes('xml') || ct.includes('octet-stream')) {
           try {
             const text = await response.text();
             if (text.includes('<?xml') || text.includes('<Invoice') || text.includes('<CreditNote')) {
               clearTimeout(timeout);
               resolve(text);
             }
-          } catch { /* ignore */ }
+          } catch {}
         }
       });
 
-      // Click botón XML (segundo botón del modal)
-      targetFrame.evaluate(() => {
-        const container = document.querySelector('div.button-container');
-        const buttons = container?.querySelectorAll('button');
-        if (buttons && buttons[1]) {
-          (buttons[1] as HTMLElement).click();
-        } else {
-          const modalBtns = Array.from(document.querySelectorAll('ngb-modal-window button'));
-          if (modalBtns[1]) (modalBtns[1] as HTMLElement).click();
-        }
-      }).catch(() => { /* ignore */ });
+      page
+        .evaluate(() => {
+          const container = document.querySelector('div.button-container');
+          const buttons = container?.querySelectorAll('button');
+          if (buttons?.[1]) (buttons[1] as HTMLElement).click();
+          else {
+            const modalBtns = Array.from(document.querySelectorAll('ngb-modal-window button'));
+            if (modalBtns[1]) (modalBtns[1] as HTMLElement).click();
+          }
+        })
+        .catch(() => {});
     });
 
-    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: XML ${xmlContent ? (xmlContent as string).length + ' bytes' : 'no obtenido'}`);
-    return { xmlContent: xmlContent as string | null };
+    console.log(
+      `[SCRAPER] ${factura.serie}-${factura.numero}: ${xmlContent ? (xmlContent as string).length + ' bytes' : 'sin XML'}`
+    );
 
+    return { xmlContent: xmlContent as string | null };
   } catch (error) {
-    const msg = (error as Error).message;
-    console.error(`[SCRAPER] Error ${factura.serie}-${factura.numero}: ${msg}`);
-    return { xmlContent: null, error: msg };
+    console.error(`[SCRAPER] Error:`, (error as Error).message);
+    return { xmlContent: null, error: (error as Error).message };
   } finally {
     if (browser) await browser.close();
   }
