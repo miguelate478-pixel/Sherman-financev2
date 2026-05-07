@@ -117,8 +117,8 @@ export async function PUT(req: NextRequest) {
 
     const solPass = decrypt(cred.encryptedPass as string, cred.iv as string, cred.authTag as string);
 
-    // Importar el módulo de browser automation
-    const { downloadXmlsViaBrowser } = await import('@/lib/sunat-browser');
+    // Importar módulos necesarios
+    const { downloadXmlFromSunat } = await import('@/lib/providers/sunat-scraper');
     const { parseXmlUbl } = await import('@/lib/xml-parser');
     const { createDocumentLine, updateDocument, getDocuments } = await import('@/lib/db');
     const { getAiProvider } = await import('@/lib/providers/ai');
@@ -132,53 +132,66 @@ export async function PUT(req: NextRequest) {
 
     log(`Iniciando descarga browser para ${company.ruc} período ${period}`);
 
-    // Descargar XMLs via browser
-    const xmlResults = await downloadXmlsViaBrowser({
-      ruc:      company.ruc as string,
-      solUser:  cred.solUser as string,
-      solPass,
-      period,
-      maxDocs,
-      onProgress: log,
-    });
-
-    log(`XMLs obtenidos del portal: ${xmlResults.length}`);
-
-    if (xmlResults.length === 0) {
-      return ok({ parsed: 0, errors: 0, total: 0, logs, message: 'No se encontraron XMLs en el portal' });
-    }
-
-    // Obtener docs existentes en BD para hacer match
-    const existingDocs = await getDocuments({ companyId, period });
-    const docMap = new Map(
-      (existingDocs as Record<string, unknown>[]).map(d => [
-        `${d.serie}-${d.number}`, d
-      ])
+    // Obtener documentos pendientes de parseo
+    const allDocs = await getDocuments({ companyId, period });
+    const pendientes = (allDocs as Record<string, unknown>[]).filter(
+      d => d.parserStatus === 'PENDIENTE' || d.parserStatus === 'ERROR' || d.parserStatus === 'SIN_XML'
     );
 
-    let parsed = 0, errors = 0;
+    log(`Documentos pendientes: ${pendientes.length}`);
 
-    for (const xmlResult of xmlResults) {
-      if (xmlResult.error) { errors++; continue; }
+    if (pendientes.length === 0) {
+      return ok({ parsed: 0, errors: 0, total: 0, logs, message: 'No hay documentos pendientes' });
+    }
 
-      const docKey = `${xmlResult.serie}-${xmlResult.numero}`;
-      const doc = docMap.get(docKey);
+    // Limitar a maxDocs
+    const docsToProcess = pendientes.slice(0, maxDocs);
+    log(`Procesando ${docsToProcess.length} documentos (límite: ${maxDocs})`);
 
-      if (!doc) {
-        log(`Doc ${docKey} no encontrado en BD, saltando`);
-        continue;
-      }
+    let parsed = 0, errors = 0, sinXml = 0;
 
+    // Procesar cada documento individualmente
+    for (const doc of docsToProcess) {
       const docId = doc.id as string;
-      const tipo  = doc.docType as string;
+      const serie = doc.serie as string;
+      const numero = doc.number as string;
+      const rucEmisor = doc.issuerRuc as string;
+      const tipo = doc.docType as string;
+
+      log(`Procesando ${serie}-${numero} (RUC emisor: ${rucEmisor})...`);
 
       try {
-        const parsedDoc = await parseXmlUbl(xmlResult.xmlContent);
+        // Descargar XML via scraping
+        const scraperResult = await downloadXmlFromSunat(
+          {
+            ruc: company.ruc as string,
+            solUser: cred.solUser as string,
+            solPass,
+          },
+          {
+            rucEmisor,
+            serie,
+            numero,
+          }
+        );
+
+        if (!scraperResult.xmlContent) {
+          log(`${serie}-${numero}: Sin XML - ${scraperResult.error || 'no disponible'}`);
+          await updateDocument(docId, { parserStatus: 'SIN_XML' });
+          sinXml++;
+          continue;
+        }
+
+        log(`${serie}-${numero}: XML obtenido (${scraperResult.xmlContent.length} bytes)`);
+
+        // Parsear XML y guardar líneas
+        const parsedDoc = await parseXmlUbl(scraperResult.xmlContent);
         let linesGuardadas = 0;
 
         for (const line of parsedDoc.lines) {
           let cl = null;
           try { cl = await ai.classifyLine(line.description, line.lineTotal, tipo); } catch {}
+          
           try {
             await createDocumentLine({
               id:           `${docId}-L${line.lineNumber}`,
@@ -200,14 +213,22 @@ export async function PUT(req: NextRequest) {
               isRecurrent:  cl?.isRecurrent  || false,
             });
             linesGuardadas++;
-          } catch {}
+          } catch (lineErr) {
+            log(`Error guardando línea ${line.lineNumber}: ${(lineErr as Error).message}`);
+          }
         }
 
-        await updateDocument(docId, { hasXml: true, parserStatus: 'PARSEADO', aiStatus: 'CLASIFICADO' });
-        log(`${docId}: ${linesGuardadas}/${parsedDoc.lines.length} líneas guardadas ✓`);
+        await updateDocument(docId, { 
+          hasXml: true, 
+          parserStatus: 'PARSEADO', 
+          aiStatus: 'CLASIFICADO' 
+        });
+        
+        log(`${serie}-${numero}: ${linesGuardadas}/${parsedDoc.lines.length} líneas guardadas ✓`);
         parsed++;
+
       } catch (e) {
-        log(`Error parseando ${docId}: ${(e as Error).message}`);
+        log(`Error procesando ${serie}-${numero}: ${(e as Error).message}`);
         await updateDocument(docId, { parserStatus: 'ERROR' });
         errors++;
       }
@@ -216,11 +237,13 @@ export async function PUT(req: NextRequest) {
     await createAuditLog({
       userId: user.sub, userEmail: user.email, userRole: user.role,
       action: 'BROWSER_XML_DOWNLOAD',
-      object: `${companyId} ${period} parsed=${parsed} errors=${errors}`,
+      object: `${companyId} ${period} parsed=${parsed} errors=${errors} sinXml=${sinXml}`,
       ip: getIP(req),
     });
 
-    return ok({ parsed, errors, total: xmlResults.length, logs });
+    log(`Resumen: ${parsed} parseados, ${errors} errores, ${sinXml} sin XML`);
+
+    return ok({ parsed, errors, sinXml, total: docsToProcess.length, logs });
   } catch (e) {
     console.error('[BROWSER] Error fatal:', (e as Error).message);
     return err(`Error browser: ${(e as Error).message}`, 500);

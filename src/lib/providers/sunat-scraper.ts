@@ -74,15 +74,15 @@ export async function downloadXmlFromSunat(
     await page.evaluate(() => {
       (document.querySelector('li[data-id2="11_38_1_1"] span.spanNivelDescripcion') as HTMLElement)?.click();
     });
-    await new Promise(r => setTimeout(r, 4000));
+    await new Promise(r => setTimeout(r, 8000)); // Aumentado para dar tiempo a que cargue el formulario Angular
 
     // BUSCAR FRAME CON FORMULARIO — buscar por contenido, no por URL
     let targetFrame = page.mainFrame();
     
     // Esperar que aparezca el input del formulario en cualquier frame
     let formFound = false;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      await new Promise(r => setTimeout(r, 1000));
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await new Promise(r => setTimeout(r, 2000));
       
       for (const frame of page.frames()) {
         try {
@@ -101,14 +101,14 @@ export async function downloadXmlFromSunat(
       }
       
       if (formFound) break;
-      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Intento ${attempt + 1}/10 buscando formulario...`);
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Intento ${attempt + 1}/20 buscando formulario...`);
     }
     
     if (!formFound) {
       // Log todos los frames disponibles para debug
       const frameUrls = page.frames().map(f => f.url());
       console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: Frames disponibles:`, frameUrls);
-      return { xmlContent: null, error: 'Formulario no encontrado después de 10 intentos' };
+      return { xmlContent: null, error: 'Formulario no encontrado después de 20 intentos (40 segundos)' };
     }
 
     // CLICK RECIBIDO
