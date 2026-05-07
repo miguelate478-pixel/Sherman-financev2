@@ -100,11 +100,6 @@ export async function GET(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   const user = await getUser(req);
   if (!user) return unauthorized();
-  
-  // SCRAPING TEMPORALMENTE DESHABILITADO
-  return err('Scraping temporalmente deshabilitado. Requiere configuración especial de Chromium en Railway. Usa la descarga masiva con APIs de SUNAT.', 503);
-  
-  /* CÓDIGO ORIGINAL COMENTADO
   try {
     const { companyId, period, maxDocs = 50 } = await req.json() as {
       companyId: string; period: string; maxDocs?: number;
@@ -230,5 +225,4 @@ export async function PUT(req: NextRequest) {
     console.error('[BROWSER] Error fatal:', (e as Error).message);
     return err(`Error browser: ${(e as Error).message}`, 500);
   }
-  */
 }

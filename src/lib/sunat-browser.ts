@@ -22,31 +22,13 @@ export interface BrowserDownloadOptions {
   onProgress?: (msg: string) => void;
 }
 
-// ── Encontrar el ejecutable de Chromium disponible ──────────────────
-async function findChromiumExecutable(): Promise<string> {
-  // En desarrollo local: usar CHROMIUM_PATH
-  if (process.env.CHROMIUM_PATH) {
-    console.log('[BROWSER] Usando CHROMIUM_PATH local:', process.env.CHROMIUM_PATH);
-    return process.env.CHROMIUM_PATH;
-  }
-
-  // En producción (Railway): usar @sparticuz/chromium
-  console.log('[BROWSER] Cargando @sparticuz/chromium para Railway...');
-  const chromium = await import('@sparticuz/chromium');
-  const path = await chromium.default.executablePath();
-  console.log('[BROWSER] Chromium de @sparticuz:', path);
-  return path;
-}
-
 // ── Lanzar browser ──────────────────────────────────────────────────
 async function getBrowser() {
-  const puppeteer = await import('puppeteer-core');
+  const puppeteer = await import('puppeteer');
 
-  const executablePath = await findChromiumExecutable();
-  console.log('[BROWSER] Usando Chromium:', executablePath);
+  console.log('[BROWSER] Lanzando Chromium incluido con Puppeteer...');
 
   const browser = await puppeteer.default.launch({
-    executablePath,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -76,7 +58,7 @@ async function getBrowser() {
 }
 
 // ── Esperar selector con timeout ────────────────────────────────────
-async function waitFor(page: import('puppeteer-core').Page, selector: string, timeout = 15000): Promise<boolean> {
+async function waitFor(page: import('puppeteer').Page, selector: string, timeout = 15000): Promise<boolean> {
   try {
     await page.waitForSelector(selector, { timeout });
     return true;
@@ -87,7 +69,7 @@ async function waitFor(page: import('puppeteer-core').Page, selector: string, ti
 
 // ── Login SOL ───────────────────────────────────────────────────────
 async function loginSol(
-  page: import('puppeteer-core').Page,
+  page: import('puppeteer').Page,
   ruc: string,
   solUser: string,
   solPass: string,
@@ -161,7 +143,7 @@ async function loginSol(
 
 // ── Navegar y descargar XMLs de comprobantes recibidos ──────────────
 async function downloadReceivedXmls(
-  page: import('puppeteer-core').Page,
+  page: import('puppeteer').Page,
   ruc: string,
   period: string,
   maxDocs: number,
@@ -304,7 +286,7 @@ async function downloadReceivedXmls(
       if (xmlLink) {
         // Capturar nueva pestaña o descarga
         const [popup] = await Promise.all([
-          new Promise<import('puppeteer-core').Page | null>(resolve => {
+          new Promise<import('puppeteer').Page | null>(resolve => {
             const timeout = setTimeout(() => resolve(null), 5000);
             page.once('popup', p => { clearTimeout(timeout); resolve(p); });
           }),
@@ -363,7 +345,7 @@ export async function downloadXmlsViaBrowser(opts: BrowserDownloadOptions): Prom
 
   log(`Iniciando browser automation para ${opts.ruc} período ${opts.period}`);
 
-  let browser: import('puppeteer-core').Browser | null = null;
+  let browser: import('puppeteer').Browser | null = null;
   try {
     browser = await getBrowser();
     log('Chromium iniciado OK');

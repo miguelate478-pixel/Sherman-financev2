@@ -1,5 +1,4 @@
-import puppeteer from 'puppeteer-core';
-import chromium from '@sparticuz/chromium';
+import puppeteer from 'puppeteer';
 
 export interface ScraperCredentials {
   ruc: string;
@@ -17,34 +16,17 @@ export async function downloadXmlFromSunat(
   creds: ScraperCredentials,
   factura: FacturaQuery
 ): Promise<{ xmlContent: string | null; error?: string }> {
-  // En desarrollo local: usar CHROMIUM_PATH del .env
-  // En producción (Railway): usar @sparticuz/chromium
-  let chromiumPath: string;
-  
-  if (process.env.CHROMIUM_PATH) {
-    chromiumPath = process.env.CHROMIUM_PATH;
-    console.log(`[SCRAPER] Usando CHROMIUM_PATH local: ${chromiumPath}`);
-  } else {
-    chromiumPath = await chromium.executablePath();
-    console.log(`[SCRAPER] Usando @sparticuz/chromium: ${chromiumPath}`);
-  }
-
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
 
   try {
-    const args = process.env.CHROMIUM_PATH 
-      ? [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-        ]
-      : chromium.args;
-
     browser = await puppeteer.launch({
-      executablePath: chromiumPath,
       headless: true,
-      args,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+      ],
     });
 
     const page = await browser.newPage();

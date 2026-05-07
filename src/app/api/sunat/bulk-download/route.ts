@@ -234,12 +234,9 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // 3. SCRAPING TEMPORALMENTE DESHABILITADO (requiere Chromium en Railway)
-              // TODO: Implementar solución alternativa para scraping
-              if (false && !xmlForLines && op === 'COMPRAS' && cred) {
+              // 3. Si tampoco hay XML de CPE, intentar scraping como último recurso (solo para COMPRAS)
+              if (!xmlForLines && op === 'COMPRAS' && cred) {
                 try {
-                  console.log(`[BULK] Scraping deshabilitado temporalmente para ${docId}`);
-                  /*
                   console.log(`[BULK] Intentando scraping para ${docId}...`);
                   const { downloadXmlFromSunat } = await import('@/lib/providers/sunat-scraper');
                   const scraperResult = await downloadXmlFromSunat(
@@ -264,9 +261,8 @@ export async function POST(req: NextRequest) {
                   } else {
                     console.log(`[BULK] Scraping falló para ${docId}: ${scraperResult.error}`);
                   }
-                  */
                 } catch (scraperErr) {
-                  console.log(`[BULK] Error scraping deshabilitado: ${(scraperErr as Error).message}`);
+                  console.log(`[BULK] Error scraping para ${docId}: ${(scraperErr as Error).message}`);
                 }
               }
 
