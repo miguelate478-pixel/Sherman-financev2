@@ -355,7 +355,13 @@ export async function POST(req: NextRequest) {
     await updateBulkJob(jobId,{status:finalStatus,docsFound:totalDocs,docsXml:totalXml,docsPdf:totalPdf,docsCdr:totalCdr,errors:totalErrors,completedAt:new Date().toISOString()});
     await createAuditLog({userId:user.sub,userEmail:user.email,userRole:user.role,action:'BULK_DOWNLOAD_COMPLETADO',object:`${periodFrom}→${periodTo} ${operation} ${totalDocs}docs`,ip:getIP(req)});
     return ok({jobId,status:finalStatus,totalDocs,totalXml,totalPdf,totalCdr,totalErrors,lastError:lastError||undefined});
-  } catch(e) { return err(`Error: ${(e as Error).message}`,500); }
+    } catch(e) {
+      console.error('[BULK] Error general:', (e as Error).message);
+      return err(`Error: ${(e as Error).message}`,500);
+    }
+  } catch(e) { 
+    return err(`Error: ${(e as Error).message}`,500); 
+  }
 }
 
 export async function GET(req: NextRequest) {
