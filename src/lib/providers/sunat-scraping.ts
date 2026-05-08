@@ -41,7 +41,10 @@ export class SunatScrapingProvider {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--start-maximized',
+        '--no-zygote',
+        '--single-process',
+        '--disable-extensions',
+        '--disable-background-networking',
       ],
     });
 
@@ -173,12 +176,22 @@ export class SunatScrapingProvider {
           );
           if (hasForm) {
             targetFrame = frame;
+            console.log('[Scraping] Formulario encontrado en iframe');
             break;
           }
         } catch {}
       }
 
-      console.log(`[Scraping] Frame encontrado: ${targetFrame.url()}`);
+      // Esperar que el formulario esté listo
+      await targetFrame.waitForFunction(
+        () =>
+          !!(
+            document.querySelector('input[formcontrolname="rucEmisor"]') ||
+            document.querySelector('input[name="rucEmisor"]')
+          ),
+        { timeout: 15000 }
+      );
+      console.log('[Scraping] Formulario Angular cargado');
 
       // PASO 8: SELECCIONAR "RECIBIDO"
       console.log('[Scraping] Seleccionando filtro "Recibido"...');
