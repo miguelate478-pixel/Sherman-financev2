@@ -400,6 +400,78 @@ export async function markCxpPaid(id: string, amount: number) {
     [today, amount, id]);
 }
 
+// ── CXC / CXP / DETRACCIONES - CREATE ────────────────────
+export async function createCxcRecord(data: {
+  id: string;
+  companyId: string;
+  documentId: string;
+  clientRuc: string;
+  clientName: string;
+  amount: number;
+  dueDate: string;
+  status: string;
+}) {
+  await execute(
+    `INSERT INTO cxc_records (id, "companyId", "documentId", "clientRuc", "clientName", amount, "dueDate", status, "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+     ON CONFLICT (id) DO NOTHING`,
+    [data.id, data.companyId, data.documentId, data.clientRuc, data.clientName, data.amount, data.dueDate, data.status]
+  );
+}
+
+export async function findCxcByDocId(documentId: string) {
+  const rows = await queryAll('SELECT * FROM cxc_records WHERE "documentId"=$1', [documentId]);
+  return rows[0] || null;
+}
+
+export async function createCxpRecord(data: {
+  id: string;
+  companyId: string;
+  documentId: string;
+  providerRuc: string;
+  providerName: string;
+  amount: number;
+  dueDate: string;
+  status: string;
+}) {
+  await execute(
+    `INSERT INTO cxp_records (id, "companyId", "documentId", "providerRuc", "providerName", amount, "dueDate", status, "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+     ON CONFLICT (id) DO NOTHING`,
+    [data.id, data.companyId, data.documentId, data.providerRuc, data.providerName, data.amount, data.dueDate, data.status]
+  );
+}
+
+export async function findCxpByDocId(documentId: string) {
+  const rows = await queryAll('SELECT * FROM cxp_records WHERE "documentId"=$1', [documentId]);
+  return rows[0] || null;
+}
+
+export async function createDetraccion(data: {
+  id: string;
+  companyId: string;
+  documentId: string;
+  provider: string;
+  provRuc: string;
+  amount: number;
+  pct: number;
+  code: string;
+  account: string;
+  status: string;
+}) {
+  await execute(
+    `INSERT INTO detractions (id, "companyId", "documentId", provider, "provRuc", amount, pct, code, account, status, "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+     ON CONFLICT (id) DO NOTHING`,
+    [data.id, data.companyId, data.documentId, data.provider, data.provRuc, data.amount, data.pct, data.code, data.account, data.status]
+  );
+}
+
+export async function findDetraccionByDocId(documentId: string) {
+  const rows = await queryAll('SELECT * FROM detractions WHERE "documentId"=$1', [documentId]);
+  return rows[0] || null;
+}
+
 // ── REPORTS ───────────────────────────────────────────────
 export async function getReportData(companyId: string, period: string) {
   const [docs, lines] = await Promise.all([

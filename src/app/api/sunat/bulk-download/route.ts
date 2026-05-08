@@ -227,6 +227,33 @@ export async function POST(req: NextRequest) {
                   parserStatus:'PENDIENTE', aiStatus:'PENDIENTE',
                 });
                 console.log('[BULK] Doc guardado OK:', docId);
+                
+                // ═══════════════════════════════════════════════════════
+                // ✨ Sincronizar registros financieros (CXC/CXP/Detracciones)
+                // ═══════════════════════════════════════════════════════
+                try {
+                  const { syncFinancialRecords } = await import('@/lib/financial-sync');
+                  await syncFinancialRecords({
+                    id: docId,
+                    companyId,
+                    operation: op === 'COMPRAS' ? 'COMPRA' : 'VENTA',
+                    docType: doc.tipo,
+                    serie: doc.serie,
+                    number: doc.numero,
+                    issuerRuc: doc.rucEmisor,
+                    issuerName: doc.rsEmisor,
+                    receiverRuc,
+                    receiverName,
+                    issueDate: doc.fecha,
+                    dueDate: doc.fecVencPag || null,
+                    total: doc.total,
+                    currency: doc.moneda,
+                  });
+                } catch (syncErr) {
+                  console.error(`[BULK] Error sincronizando financiero ${docId}:`, (syncErr as Error).message);
+                  // No fallar el documento completo si falla la sincronización
+                }
+                
               } catch (dbError) {
                 console.error(`[BULK_DOWNLOAD] Failed to save document ${docId}:`, dbError);
                 periodErrors++;
