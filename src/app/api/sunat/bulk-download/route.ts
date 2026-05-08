@@ -232,6 +232,7 @@ export async function POST(req: NextRequest) {
                 // ✨ Sincronizar registros financieros (CXC/CXP/Detracciones)
                 // ═══════════════════════════════════════════════════════
                 try {
+                  console.log(`[BULK] Iniciando sync financiero para ${docId}`);
                   const { syncFinancialRecords } = await import('@/lib/financial-sync');
                   await syncFinancialRecords({
                     id: docId,
@@ -249,8 +250,10 @@ export async function POST(req: NextRequest) {
                     total: doc.total,
                     currency: doc.moneda,
                   });
+                  console.log(`[BULK] Sync financiero completado para ${docId}`);
                 } catch (syncErr) {
-                  console.error(`[BULK] Error sincronizando financiero ${docId}:`, (syncErr as Error).message);
+                  console.error(`[BULK] ❌ ERROR sincronizando financiero ${docId}:`, (syncErr as Error).message);
+                  console.error(`[BULK] Stack:`, (syncErr as Error).stack);
                   // No fallar el documento completo si falla la sincronización
                 }
                 
