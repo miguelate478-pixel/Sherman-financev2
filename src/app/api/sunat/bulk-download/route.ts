@@ -260,6 +260,7 @@ export async function POST(req: NextRequest) {
                     doc.numero,
                     tipoCodigo,
                     doc.rucEmisor,
+                    company.ruc as string, // receptorRuc (la empresa que recibe)
                     {
                       ruc: company.ruc as string,
                       solUser: cred.solUser as string,

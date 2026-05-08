@@ -6,6 +6,7 @@ export async function fetchXmlViaSolSession(
   numero: string,
   tipoCodigo: string,
   emisorRuc: string,
+  receptorRuc: string,
   creds: { ruc: string; solUser: string; solPass: string }
 ): Promise<string | null> {
   try {
@@ -38,15 +39,17 @@ export async function fetchXmlViaSolSession(
 
     console.log('[HTTP] Cookies obtenidas, descargando XML...');
 
-    // Descargar XML directamente con las cookies de sesión
-    const url =
+    // URL 1 - Portal de comprobantes recibidos
+    const url1 =
       `https://www.sunat.gob.pe/cl-ti-itmrconsrecec/jaxrs/comprobante/xml` +
-      `?codTipo=${tipoCodigo}` +
+      `?numRuc=${receptorRuc}` +
+      `&codTipo=${tipoCodigo}` +
       `&numSerie=${serie}` +
       `&numCorrelativo=${numero}` +
       `&numRucEmisor=${emisorRuc}`;
 
-    const res = await fetch(url, {
+    console.log(`[HTTP] Intentando URL1: ${url1}`);
+    const res1 = await fetch(url1, {
       headers: {
         Cookie: cookies,
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -54,20 +57,51 @@ export async function fetchXmlViaSolSession(
       signal: AbortSignal.timeout(20000),
     });
 
-    if (!res.ok) {
-      console.log(`[HTTP] HTTP ${res.status} al descargar XML`);
-      return null;
+    if (res1.ok) {
+      const text = await res1.text();
+      const isValidXml = text && text.startsWith('<') && text.length > 100;
+      if (isValidXml) {
+        console.log(`[HTTP] ✅ XML descargado via URL1: ${text.length} bytes`);
+        return text;
+      }
+      console.log('[HTTP] URL1 respondió OK pero no es XML válido');
+    } else {
+      console.log(`[HTTP] URL1 falló: HTTP ${res1.status}`);
     }
 
-    const text = await res.text();
-    const isValidXml = text && text.startsWith('<') && text.length > 100;
+    // URL 2 - Portal alternativo SUNAT (si URL 1 da 404)
+    const url2 =
+      `https://e-factura.sunat.gob.pe/contribuyente/gem/comprobantes/` +
+      `${tipoCodigo}/${serie}/${numero}/${emisorRuc}/xml`;
 
-    if (isValidXml) {
-      console.log(`[HTTP] XML descargado exitosamente: ${text.length} bytes`);
-      return text;
+    console.log(`[HTTP] Intentando URL2: ${url2}`);
+    const res2 = await fetch(url2, {
+      headers: {
+        Cookie: cookies,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (res2.ok) {
+      const text = await res2.text();
+      const isValidXml = text && text.startsWith('<') && text.length > 100;
+      if (isValidXml) {
+        console.log(`[HTTP] ✅ XML descargado via URL2: ${text.length} bytes`);
+        return text;
+      }
+      console.log('[HTTP] URL2 respondió OK pero no es XML válido');
+    } else {
+      console.log(`[HTTP] URL2 falló: HTTP ${res2.status}`);
     }
 
-    console.log('[HTTP] Respuesta no es XML válido');
+    // Si ambas fallan, log detallado para debugging
+    console.log(`[HTTP] ❌ Ambas URLs fallaron`);
+    console.log(`[HTTP] URL1 intentada: ${url1}`);
+    console.log(`[HTTP] URL2 intentada: ${url2}`);
+    console.log(`[HTTP] Cookies usadas (primeros 100 chars): ${cookies.substring(0, 100)}`);
+    console.log(`[HTTP] URL1 status: ${res1.status}, URL2 status: ${res2.status}`);
+
     return null;
   } catch (error) {
     console.log(`[HTTP] Error en sesión SOL: ${(error as Error).message}`);
@@ -105,6 +139,7 @@ export async function downloadXmlFromSunat(
       factura.numero,
       tipoCodigo,
       factura.rucEmisor,
+      creds.ruc, // receptorRuc (la empresa que recibe)
       creds
     );
 
