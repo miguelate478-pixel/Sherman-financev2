@@ -34,7 +34,7 @@ export async function queryAll(sql: string, args: unknown[] = []): Promise<Row[]
   return res.rows;
 }
 
-async function execute(sql: string, args: unknown[] = []): Promise<void> {
+export async function execute(sql: string, args: unknown[] = []): Promise<void> {
   const db = getDb();
   await db.query(sql, args);
 }

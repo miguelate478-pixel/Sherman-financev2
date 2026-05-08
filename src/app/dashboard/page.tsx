@@ -1074,7 +1074,18 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
     addLog('Preparando lote para CONCAR SQL...');await sleep(300);
     const d=await API.bulkDownload({companyId:empresa.id,operation:cfg.op,periodFrom:cfg.periodFrom,periodTo:cfg.periodTo,documentTypes:cfg.docTypes,fileTypes:cfg.fileTypes,includeDetails:cfg.includeDetails,classifyWithAI:cfg.classifyAI});
     setRunning(false);setProgress(100);
-    if(d.ok){setResult(d.data);addLog('✅ Proceso completado exitosamente');addToast('Descarga masiva completada','success');onSetPeriod(cfg.periodFrom);onRefresh();}
+    if(d.ok){
+      setResult(d.data);addLog('✅ Proceso completado exitosamente');addToast('Descarga masiva completada','success');onSetPeriod(cfg.periodFrom);
+      // ── Auto-sync módulos financieros ──
+      addLog('🔄 Sincronizando módulos financieros (CXC/CXP/Detracciones)...');
+      try {
+        const s=await fetch('/api/sync/financial',{method:'POST',headers:H(),body:JSON.stringify({companyId:empresa.id,period:cfg.periodFrom})});
+        const sd=await s.json();
+        if(sd.ok){addLog(`✅ Sync financiero: ${sd.data.cxcCreated} CXC, ${sd.data.cxpCreated} CXP, ${sd.data.detCreated} detracciones`);}
+        else{addLog(`⚠ Sync financiero: ${sd.error}`);}
+      } catch(se){addLog(`⚠ Sync financiero error: ${(se as Error).message}`);}
+      onRefresh();
+    }
     else{addLog(`❌ Error: ${d.error}`,false);addToast(d.error||'Error','error');}
   };
 
@@ -1144,6 +1155,33 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
           <Btn color="blue" full disabled={running} onClick={iniciar}>
             {running?<><Spinner size={14} color="#fff"/>Procesando...</>:'↓↓ Iniciar descarga masiva'}
           </Btn>
+          <div style={{marginTop:8}}>
+            <Btn color="teal" full disabled={running} onClick={async()=>{
+              if(!empresa?.id){addToast('Selecciona empresa','error');return;}
+              setRunning(true);
+              addLog('🔄 Sincronizando módulos financieros desde documentos en BD...');
+              try{
+                const r=await fetch('/api/sync/financial',{method:'POST',headers:H(),body:JSON.stringify({companyId:empresa.id})});
+                const d=await r.json();
+                setRunning(false);
+                if(d.ok){
+                  addLog(`✅ CXC creados: ${d.data.cxcCreated} (ya existían: ${d.data.cxcSkipped})`);
+                  addLog(`✅ CXP creados: ${d.data.cxpCreated} (ya existían: ${d.data.cxpSkipped})`);
+                  addLog(`✅ Detracciones creadas: ${d.data.detCreated} (ya existían: ${d.data.detSkipped})`);
+                  addToast(`Sync: ${d.data.cxcCreated} CXC, ${d.data.cxpCreated} CXP, ${d.data.detCreated} detracciones`,'success');
+                  onRefresh();
+                } else {
+                  addLog(`❌ ${d.error}`,false);
+                  addToast(d.error||'Error sync','error');
+                }
+              }catch(e){setRunning(false);addLog(`❌ ${(e as Error).message}`,false);}
+            }}>
+              🔄 Sincronizar módulos financieros
+            </Btn>
+            <div style={{fontSize:10,color:C.t4,marginTop:4,lineHeight:1.4}}>
+              Llena CXC, CXP y Detracciones desde los documentos ya descargados en la BD
+            </div>
+          </div>
 
         </div>
       </div>
