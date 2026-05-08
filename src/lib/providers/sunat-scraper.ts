@@ -1,5 +1,77 @@
 import puppeteer from 'puppeteer';
 
+// ── Sesión HTTP directa (sin browser) ──────────────────────────────
+async function fetchXmlViaSolSession(
+  serie: string,
+  numero: string,
+  tipoCodigo: string,
+  emisorRuc: string,
+  creds: { ruc: string; solUser: string; solPass: string }
+): Promise<string | null> {
+  try {
+    console.log('[HTTP] Intentando descarga via sesión SOL...');
+    
+    // Login en SOL para obtener cookies
+    const loginRes = await fetch('https://www.sunat.gob.pe/sol.html', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        Origin: 'https://www.sunat.gob.pe',
+      },
+      body: new URLSearchParams({
+        tipo: '2',
+        ruc: creds.ruc,
+        usuario: creds.solUser,
+        password: creds.solPass,
+      }),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const cookies = (loginRes.headers.getSetCookie?.() || []).map(c => c.split(';')[0]).join('; ');
+
+    if (!cookies) {
+      console.log('[HTTP] No se obtuvieron cookies de sesión');
+      return null;
+    }
+
+    console.log('[HTTP] Cookies obtenidas, descargando XML...');
+
+    // Descargar XML directamente con las cookies de sesión
+    const url =
+      `https://www.sunat.gob.pe/cl-ti-itmrconsrecec/jaxrs/comprobante/xml?` +
+      `codTipo=${tipoCodigo}&numSerie=${serie}&numCorrelativo=${numero}&numRucEmisor=${emisorRuc}`;
+
+    const res = await fetch(url, {
+      headers: {
+        Cookie: cookies,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (!res.ok) {
+      console.log(`[HTTP] HTTP ${res.status} al descargar XML`);
+      return null;
+    }
+
+    const text = await res.text();
+    const isValidXml = text && text.startsWith('<') && text.length > 100;
+
+    if (isValidXml) {
+      console.log(`[HTTP] XML descargado exitosamente: ${text.length} bytes`);
+      return text;
+    }
+
+    console.log('[HTTP] Respuesta no es XML válido');
+    return null;
+  } catch (error) {
+    console.log(`[HTTP] Error en sesión SOL: ${(error as Error).message}`);
+    return null;
+  }
+}
+
 export async function downloadXmlFromSunat(
   creds: {
     ruc: string;
@@ -14,6 +86,33 @@ export async function downloadXmlFromSunat(
 ): Promise<{ xmlContent: string | null; error?: string }> {
   let browser;
   try {
+    // Mapear tipo de comprobante a código SUNAT
+    const tipoMap: Record<string, string> = {
+      '01': '01', // Factura
+      '03': '03', // Boleta
+      '07': '07', // Nota de crédito
+      '08': '08', // Nota de débito
+    };
+    const tipoCodigo = tipoMap['01'] || '01'; // Por defecto factura
+
+    // ESTRATEGIA 1: Intentar sesión HTTP directa (más rápido, sin browser)
+    console.log(`[SCRAPER] Estrategia 1: Sesión HTTP directa para ${factura.serie}-${factura.numero}`);
+    const httpXml = await fetchXmlViaSolSession(
+      factura.serie,
+      factura.numero,
+      tipoCodigo,
+      factura.rucEmisor,
+      creds
+    );
+
+    if (httpXml) {
+      console.log(`[SCRAPER] ✅ XML obtenido via HTTP: ${httpXml.length} bytes`);
+      return { xmlContent: httpXml };
+    }
+
+    // ESTRATEGIA 2: Si HTTP falla, usar browser con fetch autenticado
+    console.log(`[SCRAPER] Estrategia 2: Browser con fetch autenticado`);
+    
     browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -47,247 +146,35 @@ export async function downloadXmlFromSunat(
     await page.waitForSelector('#divContainerMenu', { timeout: 15000 });
     console.log('[SCRAPER] Login OK');
 
-    // CLICK EN EMPRESAS (data-id="2")
-    console.log('[SCRAPER] Click en Empresas...');
-    await page.evaluate(() => {
-      const empresasDiv =
-        document.querySelector('div[data-id="2"]') || document.querySelector('#divOpcionServicio2');
-      if (empresasDiv) {
-        (empresasDiv as HTMLElement).click();
-      }
-    });
-    await new Promise(r => setTimeout(r, 2000));
-
-    // NAVEGACIÓN POR MENÚ (4 CLICKS)
-    console.log('[SCRAPER] Navegando por menú...');
-
-    // Click 1: Comprobantes de pago (data-id2="11")
-    await page.evaluate(() => {
-      const el =
-        document.querySelector('li[data-id2="11"] span.spanNivelDescripcion') ||
-        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).find(
-          s => (s as HTMLElement).textContent?.trim() === 'Comprobantes de pago'
-        );
-      if (el) (el as HTMLElement).click();
-    });
-    await new Promise(r => setTimeout(r, 1500));
-
-    // Click 2: Comprobantes de Pago nivel 2 (data-id2="11_38")
-    await page.evaluate(() => {
-      const el =
-        document.querySelector('li[data-id2="11_38"] span.spanNivelDescripcion') ||
-        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).filter(
-          s => (s as HTMLElement).textContent?.trim().toLowerCase() === 'comprobantes de pago'
-        )[1];
-      if (el) (el as HTMLElement).click();
-    });
-    await new Promise(r => setTimeout(r, 1500));
-
-    // Click 3: Consulta de Comprobantes de Pago (data-id2="11_38_1")
-    await page.evaluate(() => {
-      const el =
-        document.querySelector('li[data-id2="11_38_1"] span.spanNivelDescripcion') ||
-        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).find(
-          s => (s as HTMLElement).textContent?.trim() === 'Consulta de Comprobantes de Pago'
-        );
-      if (el) (el as HTMLElement).click();
-    });
-    await new Promise(r => setTimeout(r, 1500));
-
-    // Click 4: Nueva Consulta de comprobantes de pago (data-id2="11_38_1_1")
-    await page.evaluate(() => {
-      const el =
-        document.querySelector('li[data-id2="11_38_1_1"] span.spanNivelDescripcion') ||
-        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).find(
-          s => (s as HTMLElement).textContent?.trim() === 'Nueva Consulta de comprobantes de pago'
-        );
-      if (el) (el as HTMLElement).click();
-    });
-    await new Promise(r => setTimeout(r, 4000));
-    console.log('[SCRAPER] Navegación de menú completada');
-
-    // BUSCAR FORMULARIO EN IFRAME
-    console.log('[SCRAPER] Buscando formulario en iframe...');
-    let targetFrame = page.mainFrame();
-
-    for (const frame of page.frames()) {
-      try {
-        const hasForm = await frame.evaluate(
-          () =>
-            !!(
-              document.querySelector('input[formcontrolname="rucEmisor"]') ||
-              document.querySelector('input[name="rucEmisor"]')
-            )
-        );
-        if (hasForm) {
-          targetFrame = frame;
-          console.log('[SCRAPER] Formulario encontrado en iframe');
-          break;
-        }
-      } catch {}
-    }
-
-    // ESPERAR FORMULARIO ANGULAR
-    await targetFrame.waitForFunction(
-      () =>
-        !!(
-          document.querySelector('input[formcontrolname="rucEmisor"]') ||
-          document.querySelector('input[name="rucEmisor"]')
-        ),
-      { timeout: 15000 }
+    // Navegar directo al módulo (sin seguir el menú)
+    console.log('[SCRAPER] Navegando directo al módulo de consulta...');
+    await page.goto(
+      'https://www.sunat.gob.pe/cl-ti-itmrconsrecec/jaxrs/web/itmConsultaRecepcion',
+      { waitUntil: 'domcontentloaded', timeout: 30000 }
     );
-    console.log('[SCRAPER] Formulario Angular cargado');
+    console.log('[SCRAPER] Módulo cargado');
 
-    // CLICK RECIBIDO
-    await targetFrame.evaluate(() => {
-      const r =
-        (document.querySelector('input[type="radio"][value="RBR"]') as HTMLInputElement) ||
-        (document.querySelector('input[id="recibido"]') as HTMLInputElement);
-      if (r) {
-        r.click();
-        r.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    });
-    await new Promise(r => setTimeout(r, 1000));
-
-    // RUC EMISOR
-    await targetFrame.evaluate((ruc: string) => {
-      const input =
-        (document.querySelector('input[formcontrolname="rucEmisor"]') as HTMLInputElement) ||
-        (document.querySelector('input[name="rucEmisor"]') as HTMLInputElement);
-      if (!input) return;
-      input.focus();
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-      setter.call(input, ruc);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      input.dispatchEvent(new Event('blur', { bubbles: true }));
-    }, factura.rucEmisor);
-    await new Promise(r => setTimeout(r, 800));
-
-    // DROPDOWN FACTURA (PrimeNG)
-    await targetFrame.evaluate(() => {
-      const trigger =
-        (document.querySelector('div[role="button"][aria-haspopup="listbox"]') as HTMLElement) ||
-        (document.querySelector('p-dropdown div.p-dropdown-trigger') as HTMLElement);
-      if (trigger) trigger.click();
-    });
-    await new Promise(r => setTimeout(r, 1000));
-
-    await targetFrame.evaluate(() => {
-      const items = Array.from(
-        document.querySelectorAll('li[role="option"], .p-dropdown-item, li.p-dropdown-item')
-      );
-      const factura = items.find(i => (i as HTMLElement).textContent?.trim() === 'Factura');
-      if (factura) (factura as HTMLElement).click();
-    });
-    await new Promise(r => setTimeout(r, 800));
-
-    // SERIE
-    await targetFrame.evaluate((serie: string) => {
-      const input =
-        (document.querySelector('input[formcontrolname="serieComprobante"]') as HTMLInputElement) ||
-        (document.querySelector('input[name="serieComprobante"]') as HTMLInputElement);
-      if (!input) return;
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-      setter.call(input, serie);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    }, factura.serie);
-    await new Promise(r => setTimeout(r, 500));
-
-    // NÚMERO
-    await targetFrame.evaluate((numero: string) => {
-      const input =
-        (document.querySelector('input[formcontrolname="numeroComprobante"]') as HTMLInputElement) ||
-        (document.querySelector('input[name="numeroComprobante"]') as HTMLInputElement);
-      if (!input) return;
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-      setter.call(input, numero);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    }, factura.numero);
-    await new Promise(r => setTimeout(r, 500));
-
-    // CONSULTAR
-    await targetFrame.evaluate(() => {
-      const btn =
-        (document.querySelector('button.btn.boton-primary') as HTMLElement) ||
-        (document.querySelector('button[type="submit"]') as HTMLElement) ||
-        (Array.from(document.querySelectorAll('button')).find(b =>
-          (b as HTMLElement).textContent?.trim().toLowerCase().includes('consultar')
-        ) as HTMLElement);
-      if (btn) btn.click();
-    });
-    await new Promise(r => setTimeout(r, 5000));
-    console.log('[SCRAPER] Consulta enviada');
-
-    // ESPERAR MODAL
-    await targetFrame.waitForSelector('ngb-modal-window, .modal-dialog, control-cpe-factura', {
-      timeout: 15000,
-    });
-    await new Promise(r => setTimeout(r, 2000));
-    console.log('[SCRAPER] Modal con factura abierto');
-
-    // INTERCEPTAR XML
-    const xmlContent = await new Promise<string | null>(resolve => {
-      const timeout = setTimeout(() => resolve(null), 15000);
-
-      page.on('response', async response => {
-        const url = response.url();
-        const ct = response.headers()['content-type'] || '';
-        if (url.includes('.xml') || ct.includes('xml') || ct.includes('octet-stream')) {
-          try {
-            const text = await response.text();
-            if (text.includes('<?xml') || text.includes('<Invoice') || text.includes('<CreditNote')) {
-              clearTimeout(timeout);
-              resolve(text);
-            }
-          } catch {}
+    // Usar fetch dentro del contexto autenticado (sin tocar ningún iframe)
+    console.log('[SCRAPER] Descargando XML via fetch autenticado...');
+    const xmlContent = await page.evaluate(
+      async ({ tipoCodigo, serie, numero, emisorRuc }) => {
+        const url =
+          `https://www.sunat.gob.pe/cl-ti-itmrconsrecec/jaxrs/comprobante/xml?` +
+          `codTipo=${tipoCodigo}&numSerie=${serie}&numCorrelativo=${numero}&numRucEmisor=${emisorRuc}`;
+        try {
+          const res = await fetch(url, { credentials: 'include' });
+          if (!res.ok) return null;
+          const text = await res.text();
+          return text && text.length > 100 ? text : null;
+        } catch {
+          return null;
         }
-      });
-
-      // Click en botón XML (segundo botón en container)
-      targetFrame
-        .evaluate(() => {
-          const container = document.querySelector('div.button-container, .button-container');
-          if (container) {
-            const buttons = container.querySelectorAll('button');
-            if (buttons[1]) {
-              (buttons[1] as HTMLElement).click();
-              return true;
-            }
-          }
-
-          // Fallback: buscar por título o aria-label
-          const allBtns = Array.from(document.querySelectorAll('button'));
-          const xmlBtn = allBtns.find(b => {
-            const title = ((b as HTMLElement).title || b.getAttribute('aria-label') || '').toLowerCase();
-            const cls = ((b as HTMLElement).className || '').toLowerCase();
-            return title.includes('xml') || cls.includes('xml');
-          });
-
-          if (xmlBtn) {
-            (xmlBtn as HTMLElement).click();
-            return true;
-          }
-
-          // Fallback 2: el botón verde (segundo en modal)
-          const ngxBtns = Array.from(
-            document.querySelectorAll('ngb-modal-window button, .modal button')
-          );
-          if (ngxBtns.length >= 2) {
-            (ngxBtns[1] as HTMLElement).click();
-            return true;
-          }
-
-          return false;
-        })
-        .catch(() => {});
-    });
+      },
+      { tipoCodigo, serie: factura.serie, numero: factura.numero, emisorRuc: factura.rucEmisor }
+    );
 
     console.log(
-      `[SCRAPER] ${factura.serie}-${factura.numero}: ${xmlContent ? (xmlContent as string).length + ' bytes' : 'sin XML'}`
+      `[SCRAPER] ${factura.serie}-${factura.numero}: ${xmlContent ? xmlContent.length + ' bytes' : 'sin XML'}`
     );
 
     return { xmlContent: xmlContent as string | null };
