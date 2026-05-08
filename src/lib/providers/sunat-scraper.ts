@@ -190,33 +190,58 @@ export async function downloadXmlFromSunat(
       'https://www.sunat.gob.pe/cl-ti-itmrconsrecec/jaxrs/web/itmConsultaRecepcion',
       { waitUntil: 'domcontentloaded', timeout: 30000 }
     );
+    
+    // Logging detallado de la página actual
+    console.log(`[SCRAPER] URL actual después de navegar: ${page.url()}`);
+    console.log(`[SCRAPER] Title: ${await page.title()}`);
     console.log('[SCRAPER] Módulo cargado');
 
-    // Usar fetch dentro del contexto autenticado (sin esperar selectores)
+    // Usar fetch dentro del contexto autenticado con logging detallado
     console.log('[SCRAPER] Descargando XML via fetch autenticado...');
-    const xmlContent = await page.evaluate(
-      async ({ tipoCodigo, serie, numero, emisorRuc }) => {
+    const result = await page.evaluate(
+      async ({ tipoCodigo, serie, numero, emisorRuc, receptorRuc }) => {
         const url =
           `/cl-ti-itmrconsrecec/jaxrs/comprobante/xml` +
-          `?codTipo=${tipoCodigo}&numSerie=${serie}&numCorrelativo=${numero}&numRucEmisor=${emisorRuc}`;
+          `?numRuc=${receptorRuc}&codTipo=${tipoCodigo}&numSerie=${serie}&numCorrelativo=${numero}&numRucEmisor=${emisorRuc}`;
         try {
           const res = await fetch(url, { credentials: 'include' });
-          if (!res.ok) return null;
           const text = await res.text();
-          return text && text.startsWith('<') && text.length > 100 ? text : null;
-        } catch {
-          return null;
+          return {
+            status: res.status,
+            url: url,
+            bodyStart: text.substring(0, 200), // primeros 200 chars
+            isXml: text.trim().startsWith('<'),
+            bodyLength: text.length,
+            fullText: text.trim().startsWith('<') && text.length > 100 ? text : null,
+          };
+        } catch (e) {
+          return { error: (e as Error).message };
         }
       },
-      { tipoCodigo, serie: factura.serie, numero: factura.numero, emisorRuc: factura.rucEmisor }
+      {
+        tipoCodigo,
+        serie: factura.serie,
+        numero: factura.numero,
+        emisorRuc: factura.rucEmisor,
+        receptorRuc: creds.ruc,
+      }
     );
 
-    if (xmlContent) {
-      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: ${xmlContent.length} bytes`);
-      return { xmlContent };
+    console.log(`[SCRAPER] fetch result:`, JSON.stringify({
+      status: result.status,
+      url: result.url,
+      bodyStart: result.bodyStart,
+      isXml: result.isXml,
+      bodyLength: result.bodyLength,
+      error: result.error,
+    }));
+
+    if (result.fullText) {
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: ${result.fullText.length} bytes`);
+      return { xmlContent: result.fullText };
     }
 
-    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: sin XML`);
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: sin XML válido`);
     return { xmlContent: null };
   } catch (error) {
     console.error(`[SCRAPER] Error:`, (error as Error).message);
