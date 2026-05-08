@@ -8,11 +8,11 @@ import { decrypt } from '@/lib/crypto';
 
 function getPeriods(from:string,to:string):string[]{const ps:string[]=[];let[y,m]=from.split('-').map(Number);const[ty,tm]=to.split('-').map(Number);while(y<ty||(y===ty&&m<=tm)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m++;if(m>12){m=1;y++;}}return ps;}
 
-// ─── CPE Token (scope diferente a SIRE) ───────────────────────────
+// ─── CPE Token SOL (usa credenciales SOL del usuario, NO clientSecret) ───────
 const cpeTokenCache = new Map<string, { token: string; expiresAt: number }>();
 
-async function getCpeToken(ruc: string, solUser: string, solPass: string, clientId: string, clientSecret: string): Promise<string> {
-  const key = `cpe-${ruc}-${clientId}`;
+async function getSunatTokenSOL(ruc: string, solUser: string, solPass: string, clientId: string): Promise<string> {
+  const key = `cpe-sol-${ruc}-${clientId}`;
   const cached = cpeTokenCache.get(key);
   if (cached && Date.now() < cached.expiresAt - 60000) return cached.token;
 
@@ -20,44 +20,80 @@ async function getCpeToken(ruc: string, solUser: string, solPass: string, client
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      grant_type:    'password',
-      scope:         'https://api-cpe.sunat.gob.pe',   // ← scope CPE, no SIRE
-      client_id:     clientId,
-      client_secret: clientSecret,
-      username:      `${ruc}${solUser}`,
-      password:      solPass,
+      grant_type: 'password',
+      scope:      'https://api-cpe.sunat.gob.pe',
+      client_id:  clientId,
+      username:   `${ruc}${solUser}`,
+      password:   solPass,
     }),
     signal: AbortSignal.timeout(15000),
   });
+  
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`CPE token error ${res.status}: ${body.substring(0,300)}`);
+    throw new Error(`Token SOL fallido ${res.status}: ${body.substring(0,300)}`);
   }
-  const j = await res.json() as { access_token: string; expires_in: number };
-  cpeTokenCache.set(key, { token: j.access_token, expiresAt: Date.now() + j.expires_in * 1000 });
-  console.log('[CPE] Token obtenido OK para RUC:', ruc, '| expires_in:', j.expires_in);
-  return j.access_token;
+  
+  const data = await res.json() as { access_token?: string; expires_in?: number };
+  if (!data.access_token) {
+    throw new Error(`Token SOL fallido: ${JSON.stringify(data)}`);
+  }
+  
+  cpeTokenCache.set(key, { token: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 });
+  console.log('[CPE-SOL] Token obtenido OK para RUC:', ruc, '| expires_in:', data.expires_in);
+  return data.access_token;
 }
 
-// ─── Descarga individual por CPE ──────────────────────────────────
-const CPE_BASE = 'https://api-cpe.sunat.gob.pe/v1/contribuyente/gem';
+// ─── Descarga individual por CPE con token SOL ──────────────────────
 const TIPO_MAP: Record<string,string> = { '01':'01','03':'03','07':'07','08':'08','RC':'RC' };
 
-async function downloadCpeFile(token: string, tipo: string, serie: string, numero: string, rucEmisor: string, fileType: 'xml'|'pdf'|'cdr'): Promise<{ content: Buffer; ok: boolean; error?: string }> {
+async function downloadCpeXmlSOL(
+  tokenSOL: string,
+  tipo: string,
+  serie: string,
+  numero: string,
+  emisorRuc: string,
+  receptorRuc: string
+): Promise<{ content: Buffer; ok: boolean; error?: string }> {
   const tipoCode = TIPO_MAP[tipo] ?? tipo;
-  const url = `${CPE_BASE}/comprobantes/${tipoCode}/${serie}/${numero}/${rucEmisor}/${fileType}`;
-  const accept = fileType === 'pdf' ? 'application/pdf' : 'application/xml';
-  console.log(`[CPE] Descargando ${fileType.toUpperCase()}: ${url}`);
+  const url = `https://api-cpe.sunat.gob.pe/v1/contribuyente/consultacpe/comprobantes/` +
+    `${emisorRuc}-${tipoCode}-${serie}-${numero}-${receptorRuc}/02`;
+  
+  console.log(`[CPE-SOL] Descargando XML: ${url}`);
+  
   try {
-    let res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: accept }, signal: AbortSignal.timeout(30000) });
-    if (!res.ok) {
-      const body = await res.text();
-      console.error(`[CPE] HTTP ${res.status} para ${serie}-${numero} ${fileType}: ${body.substring(0,200)}`);
-      return { content: Buffer.alloc(0), ok: false, error: `HTTP ${res.status}: ${body.substring(0,200)}` };
+    const xmlRes = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${tokenSOL}`,
+        'Accept': 'application/json, text/plain, */*',
+        'Origin': 'https://e-factura.sunat.gob.pe',
+        'Referer': 'https://e-factura.sunat.gob.pe/',
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    
+    if (!xmlRes.ok) {
+      const body = await xmlRes.text();
+      console.error(`[CPE-SOL] HTTP ${xmlRes.status} para ${serie}-${numero}: ${body.substring(0,200)}`);
+      return { content: Buffer.alloc(0), ok: false, error: `HTTP ${xmlRes.status}: ${body.substring(0,200)}` };
     }
-    const buf = Buffer.from(await res.arrayBuffer());
+    
+    const data = await xmlRes.json() as Record<string, unknown>;
+    console.log('[CPE-SOL] response:', JSON.stringify(data).substring(0, 300));
+    
+    // El XML puede venir en diferentes campos según el tipo de respuesta
+    const xmlContent = (data.xml || data.content || data.data || '') as string;
+    
+    if (!xmlContent || typeof xmlContent !== 'string') {
+      console.error(`[CPE-SOL] Sin XML en respuesta para ${serie}-${numero}`);
+      return { content: Buffer.alloc(0), ok: false, error: 'Sin XML en respuesta' };
+    }
+    
+    const buf = Buffer.from(xmlContent, 'utf8');
+    console.log(`[CPE-SOL] XML descargado OK: ${buf.length} bytes`);
     return { content: buf, ok: true };
-  } catch(e) {
+  } catch (e) {
+    console.error(`[CPE-SOL] Error: ${(e as Error).message}`);
     return { content: Buffer.alloc(0), ok: false, error: (e as Error).message };
   }
 }
@@ -110,11 +146,6 @@ export async function POST(req: NextRequest) {
     const ai    = getAiProvider();
     let totalDocs=0,totalXml=0,totalPdf=0,totalCdr=0,totalErrors=0;
     let lastError = '';
-
-    // ── Browser compartido para scraping (se inicializa solo si es necesario) ──
-    let browser: any = null;
-    let browserPage: any = null;
-    let browserAuthenticated = false;
 
     let sireToken='';
     try {
@@ -210,350 +241,49 @@ export async function POST(req: NextRequest) {
               // 1. Intentar con XML ya descargado vía SIRE (si existe)
               let xmlForLines: string | undefined = xmlContent;
 
-              // 2. Si no hay XML de SIRE, intentar descarga individual vía API CPE
-              console.log(`[BULK] includeDetails para ${docId} — xmlContent:${!!xmlContent} clientId:${!!clientId} clientSecret:${!!clientSecret}`);
-              if (!xmlForLines && clientId && clientSecret) {
+              // 2. Si no hay XML de SIRE, intentar descarga individual vía API CPE con token SOL
+              console.log(`[BULK] includeDetails para ${docId} — xmlContent:${!!xmlContent} clientId:${!!clientId}`);
+              if (!xmlForLines && clientId && cred) {
                 try {
-                  const cpeToken = await getCpeToken(
+                  const tokenSOL = await getSunatTokenSOL(
                     company.ruc as string,
                     (cred?.solUser as string) || '',
                     solPass,
-                    clientId,
-                    clientSecret
+                    clientId
                   );
-                  // Para compras: el emisor es doc.rucEmisor
-                  // Para ventas: el emisor es la propia empresa
+                  
+                  // Para compras: el emisor es doc.rucEmisor, receptor es la empresa
+                  // Para ventas: el emisor es la propia empresa, receptor es el cliente
                   const rucEmisorCpe = op === 'COMPRAS' ? doc.rucEmisor : company.ruc as string;
-                  const cpeResult = await downloadCpeFile(cpeToken, doc.tipo, doc.serie, doc.numero, rucEmisorCpe, 'xml');
+                  const rucReceptorCpe = op === 'COMPRAS' ? company.ruc as string : receiverRuc;
+                  
+                  const cpeResult = await downloadCpeXmlSOL(
+                    tokenSOL,
+                    doc.tipo,
+                    doc.serie,
+                    doc.numero,
+                    rucEmisorCpe,
+                    rucReceptorCpe
+                  );
+                  
                   if (cpeResult.ok && cpeResult.content.length > 0) {
                     xmlForLines = cpeResult.content.toString('utf8');
-                    console.log(`[BULK] XML CPE descargado para ${docId}: ${xmlForLines.length} bytes`);
+                    console.log(`[BULK] XML CPE-SOL descargado para ${docId}: ${xmlForLines.length} bytes`);
                     // Actualizar flags en BD
                     hasXml = true;
                     docHash = cpeResult.content.toString('hex').substring(0, 64);
                     await updateDocument(docId, { hasXml: true, hashSha256: docHash });
                   } else {
-                    console.log(`[BULK] CPE XML no disponible para ${docId}: ${cpeResult.error}`);
+                    console.log(`[BULK] CPE-SOL XML no disponible para ${docId}: ${cpeResult.error}`);
                   }
                 } catch (cpeErr) {
-                  console.log(`[BULK] Error CPE para ${docId}: ${(cpeErr as Error).message}`);
+                  console.log(`[BULK] Error CPE-SOL para ${docId}: ${(cpeErr as Error).message}`);
                 }
               }
 
-              // 3. Si tampoco hay XML de CPE, intentar sesión HTTP directa (sin browser)
+              // 3. Si CPE-SOL también falla, marcar como SIN_XML (ya no usamos browser ni HTTP cookies)
               if (!xmlForLines && op === 'COMPRAS' && cred) {
-                try {
-                  console.log(`[BULK] Intentando sesión HTTP directa para ${docId}...`);
-                  const { fetchXmlViaSolSession } = await import('@/lib/providers/sunat-scraper');
-                  
-                  // Mapear tipo de comprobante
-                  const tipoMap: Record<string, string> = {
-                    '01': '01', // Factura
-                    '03': '03', // Boleta
-                    '07': '07', // Nota de crédito
-                    '08': '08', // Nota de débito
-                  };
-                  const tipoCodigo = tipoMap[doc.tipo] || '01';
-                  
-                  const httpXml = await fetchXmlViaSolSession(
-                    doc.serie,
-                    doc.numero,
-                    tipoCodigo,
-                    doc.rucEmisor,
-                    company.ruc as string, // receptorRuc (la empresa que recibe)
-                    {
-                      ruc: company.ruc as string,
-                      solUser: cred.solUser as string,
-                      solPass,
-                    }
-                  );
-                  
-                  if (httpXml) {
-                    xmlForLines = httpXml;
-                    console.log(`[BULK] XML HTTP descargado para ${docId}: ${xmlForLines.length} bytes`);
-                    hasXml = true;
-                    await updateDocument(docId, { hasXml: true });
-                  } else {
-                    console.log(`[BULK] HTTP no disponible para ${docId}`);
-                  }
-                } catch (httpErr) {
-                  console.log(`[BULK] Error HTTP para ${docId}: ${(httpErr as Error).message}`);
-                }
-              }
-
-              // 4. Si HTTP también falla, intentar scraping con browser (último recurso)
-              if (!xmlForLines && op === 'COMPRAS' && cred) {
-                try {
-                  console.log(`[BULK] Intentando scraping para ${docId}...`);
-                  
-                  // Inicializar browser solo una vez
-                  if (!browserAuthenticated) {
-                    console.log('[BULK] Inicializando browser compartido...');
-                    const puppeteer = await import('puppeteer');
-                    browser = await puppeteer.default.launch({
-                      headless: true,
-                      args: [
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-gpu',
-                        '--no-zygote',
-                        '--single-process',
-                        '--disable-extensions',
-                        '--disable-background-networking',
-                      ],
-                    });
-                    
-                    browserPage = await browser.newPage();
-                    await browserPage.setUserAgent(
-                      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
-                    );
-                    
-                    // LOGIN (solo una vez)
-                    console.log('[BULK] Login en SUNAT...');
-                    await browserPage.goto('https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm', {
-                      waitUntil: 'networkidle2',
-                      timeout: 30000,
-                    });
-                    await browserPage.waitForSelector('#txtRuc', { timeout: 10000 });
-                    await browserPage.type('#txtRuc', company.ruc as string, { delay: 50 });
-                    await browserPage.type('#txtUsuario', cred.solUser as string, { delay: 50 });
-                    await browserPage.type('#txtContrasena', solPass, { delay: 50 });
-                    await browserPage.click('#btnAceptar');
-                    await browserPage.waitForSelector('#divContainerMenu', { timeout: 15000 });
-                    console.log('[BULK] Login OK - browser autenticado');
-                    
-                    // CLICK EN EMPRESAS (data-id="2")
-                    await browserPage.evaluate(() => {
-                      const empresasDiv =
-                        document.querySelector('div[data-id="2"]') || document.querySelector('#divOpcionServicio2');
-                      if (empresasDiv) {
-                        (empresasDiv as HTMLElement).click();
-                      }
-                    });
-                    await new Promise(r => setTimeout(r, 2000));
-                    
-                    // NAVEGACIÓN POR MENÚ (4 CLICKS)
-                    await browserPage.evaluate(() => {
-                      const el =
-                        document.querySelector('li[data-id2="11"] span.spanNivelDescripcion') ||
-                        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).find(
-                          s => (s as HTMLElement).textContent?.trim() === 'Comprobantes de pago'
-                        );
-                      if (el) (el as HTMLElement).click();
-                    });
-                    await new Promise(r => setTimeout(r, 1500));
-                    
-                    await browserPage.evaluate(() => {
-                      const el =
-                        document.querySelector('li[data-id2="11_38"] span.spanNivelDescripcion') ||
-                        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).filter(
-                          s => (s as HTMLElement).textContent?.trim().toLowerCase() === 'comprobantes de pago'
-                        )[1];
-                      if (el) (el as HTMLElement).click();
-                    });
-                    await new Promise(r => setTimeout(r, 1500));
-                    
-                    await browserPage.evaluate(() => {
-                      const el =
-                        document.querySelector('li[data-id2="11_38_1"] span.spanNivelDescripcion') ||
-                        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).find(
-                          s => (s as HTMLElement).textContent?.trim() === 'Consulta de Comprobantes de Pago'
-                        );
-                      if (el) (el as HTMLElement).click();
-                    });
-                    await new Promise(r => setTimeout(r, 1500));
-                    
-                    await browserPage.evaluate(() => {
-                      const el =
-                        document.querySelector('li[data-id2="11_38_1_1"] span.spanNivelDescripcion') ||
-                        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).find(
-                          s => (s as HTMLElement).textContent?.trim() === 'Nueva Consulta de comprobantes de pago'
-                        );
-                      if (el) (el as HTMLElement).click();
-                    });
-                    await new Promise(r => setTimeout(r, 4000));
-                    
-                    browserAuthenticated = true;
-                    console.log('[BULK] Browser autenticado y navegado al formulario');
-                  }
-                  
-                  // Usar el browser ya autenticado para descargar este documento
-                  console.log(`[BULK] Usando browser compartido para ${docId}...`);
-                  
-                  // BUSCAR FORMULARIO EN IFRAME
-                  let targetFrame = browserPage.mainFrame();
-                  for (const frame of browserPage.frames()) {
-                    try {
-                      const hasForm = await frame.evaluate(
-                        () =>
-                          !!(
-                            document.querySelector('input[formcontrolname="rucEmisor"]') ||
-                            document.querySelector('input[name="rucEmisor"]')
-                          )
-                      );
-                      if (hasForm) {
-                        targetFrame = frame;
-                        break;
-                      }
-                    } catch {}
-                  }
-                  
-                  // LLENAR FORMULARIO
-                  await targetFrame.evaluate(() => {
-                    const r =
-                      (document.querySelector('input[type="radio"][value="RBR"]') as HTMLInputElement) ||
-                      (document.querySelector('input[id="recibido"]') as HTMLInputElement);
-                    if (r) {
-                      r.click();
-                      r.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                  });
-                  await new Promise(r => setTimeout(r, 500));
-                  
-                  // RUC EMISOR
-                  await targetFrame.evaluate((ruc: string) => {
-                    const input =
-                      (document.querySelector('input[formcontrolname="rucEmisor"]') as HTMLInputElement) ||
-                      (document.querySelector('input[name="rucEmisor"]') as HTMLInputElement);
-                    if (!input) return;
-                    input.focus();
-                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-                    setter.call(input, ruc);
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                    input.dispatchEvent(new Event('blur', { bubbles: true }));
-                  }, doc.rucEmisor);
-                  await new Promise(r => setTimeout(r, 500));
-                  
-                  // DROPDOWN FACTURA
-                  await targetFrame.evaluate(() => {
-                    const trigger =
-                      (document.querySelector('div[role="button"][aria-haspopup="listbox"]') as HTMLElement) ||
-                      (document.querySelector('p-dropdown div.p-dropdown-trigger') as HTMLElement);
-                    if (trigger) trigger.click();
-                  });
-                  await new Promise(r => setTimeout(r, 800));
-                  
-                  await targetFrame.evaluate(() => {
-                    const items = Array.from(
-                      document.querySelectorAll('li[role="option"], .p-dropdown-item, li.p-dropdown-item')
-                    );
-                    const factura = items.find(i => (i as HTMLElement).textContent?.trim() === 'Factura');
-                    if (factura) (factura as HTMLElement).click();
-                  });
-                  await new Promise(r => setTimeout(r, 500));
-                  
-                  // SERIE
-                  await targetFrame.evaluate((serie: string) => {
-                    const input =
-                      (document.querySelector('input[formcontrolname="serieComprobante"]') as HTMLInputElement) ||
-                      (document.querySelector('input[name="serieComprobante"]') as HTMLInputElement);
-                    if (!input) return;
-                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-                    setter.call(input, serie);
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                  }, doc.serie);
-                  await new Promise(r => setTimeout(r, 500));
-                  
-                  // NÚMERO
-                  await targetFrame.evaluate((numero: string) => {
-                    const input =
-                      (document.querySelector('input[formcontrolname="numeroComprobante"]') as HTMLInputElement) ||
-                      (document.querySelector('input[name="numeroComprobante"]') as HTMLInputElement);
-                    if (!input) return;
-                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-                    setter.call(input, numero);
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                  }, doc.numero);
-                  await new Promise(r => setTimeout(r, 500));
-                  
-                  // CONSULTAR
-                  await targetFrame.evaluate(() => {
-                    const btn =
-                      (document.querySelector('button.btn.boton-primary') as HTMLElement) ||
-                      (document.querySelector('button[type="submit"]') as HTMLElement) ||
-                      (Array.from(document.querySelectorAll('button')).find(b =>
-                        (b as HTMLElement).textContent?.trim().toLowerCase().includes('consultar')
-                      ) as HTMLElement);
-                    if (btn) btn.click();
-                  });
-                  await new Promise(r => setTimeout(r, 5000));
-                  
-                  // ESPERAR MODAL
-                  await targetFrame.waitForSelector('ngb-modal-window, .modal-dialog, control-cpe-factura', {
-                    timeout: 15000,
-                  });
-                  await new Promise(r => setTimeout(r, 2000));
-                  
-                  // INTERCEPTAR XML
-                  const xmlContent = await new Promise<string | null>(resolve => {
-                    const timeout = setTimeout(() => resolve(null), 15000);
-                    
-                    browserPage.on('response', async (response: any) => {
-                      const url = response.url();
-                      const ct = response.headers()['content-type'] || '';
-                      if (url.includes('.xml') || ct.includes('xml') || ct.includes('octet-stream')) {
-                        try {
-                          const text = await response.text();
-                          if (text.includes('<?xml') || text.includes('<Invoice') || text.includes('<CreditNote')) {
-                            clearTimeout(timeout);
-                            resolve(text);
-                          }
-                        } catch {}
-                      }
-                    });
-                    
-                    // Click en botón XML
-                    targetFrame
-                      .evaluate(() => {
-                        const container = document.querySelector('div.button-container, .button-container');
-                        if (container) {
-                          const buttons = container.querySelectorAll('button');
-                          if (buttons[1]) {
-                            (buttons[1] as HTMLElement).click();
-                            return true;
-                          }
-                        }
-                        
-                        const allBtns = Array.from(document.querySelectorAll('button'));
-                        const xmlBtn = allBtns.find(b => {
-                          const title = ((b as HTMLElement).title || b.getAttribute('aria-label') || '').toLowerCase();
-                          const cls = ((b as HTMLElement).className || '').toLowerCase();
-                          return title.includes('xml') || cls.includes('xml');
-                        });
-                        
-                        if (xmlBtn) {
-                          (xmlBtn as HTMLElement).click();
-                          return true;
-                        }
-                        
-                        const ngxBtns = Array.from(
-                          document.querySelectorAll('ngb-modal-window button, .modal button')
-                        );
-                        if (ngxBtns.length >= 2) {
-                          (ngxBtns[1] as HTMLElement).click();
-                          return true;
-                        }
-                        
-                        return false;
-                      })
-                      .catch(() => {});
-                  });
-
-                  if (xmlContent) {
-                    xmlForLines = xmlContent;
-                    console.log(`[BULK] XML scrapeado para ${docId}: ${xmlForLines.length} bytes`);
-                    hasXml = true;
-                    await updateDocument(docId, { hasXml: true });
-                  } else {
-                    console.log(`[BULK] Scraping falló para ${docId}: sin XML`);
-                  }
-                } catch (scraperErr) {
-                  console.log(`[BULK] Error scraping para ${docId}: ${(scraperErr as Error).message}`);
-                }
+                console.log(`[BULK] ${docId}: XML no disponible via CPE-SOL — marcando como SIN_XML`);
               }
 
               // 4. Parsear XML y guardar líneas
@@ -625,17 +355,6 @@ export async function POST(req: NextRequest) {
     await updateBulkJob(jobId,{status:finalStatus,docsFound:totalDocs,docsXml:totalXml,docsPdf:totalPdf,docsCdr:totalCdr,errors:totalErrors,completedAt:new Date().toISOString()});
     await createAuditLog({userId:user.sub,userEmail:user.email,userRole:user.role,action:'BULK_DOWNLOAD_COMPLETADO',object:`${periodFrom}→${periodTo} ${operation} ${totalDocs}docs`,ip:getIP(req)});
     return ok({jobId,status:finalStatus,totalDocs,totalXml,totalPdf,totalCdr,totalErrors,lastError:lastError||undefined});
-    } finally {
-      // Cerrar browser compartido si fue inicializado
-      if (browser) {
-        try {
-          await browser.close();
-          console.log('[BULK] Browser compartido cerrado');
-        } catch (e) {
-          console.error('[BULK] Error cerrando browser:', (e as Error).message);
-        }
-      }
-    }
   } catch(e) { return err(`Error: ${(e as Error).message}`,500); }
 }
 
@@ -940,20 +659,20 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    // ── VENTAS: XMLs via CPE API (comprobantes que nosotros emitimos) ─
+    // ── VENTAS: XMLs via CPE API con token SOL (comprobantes que nosotros emitimos) ─
     if (ventas.length > 0) {
       try {
-        if (!clientId || !clientSecret) {
-          console.log('[PARSE] Sin clientId/clientSecret para CPE API');
+        if (!clientId) {
+          console.log('[PARSE] Sin clientId para CPE API');
           for (const doc of ventas as Record<string,unknown>[]) {
             await updateDocument(doc.id as string, { parserStatus: 'SIN_XML' });
             sinXml++;
           }
         } else {
-          const cpeToken = await getCpeToken(
-            company.ruc as string, cred.solUser as string, solPass, clientId, clientSecret
+          const tokenSOL = await getSunatTokenSOL(
+            company.ruc as string, cred.solUser as string, solPass, clientId
           );
-          console.log(`[PARSE] Token CPE OK — procesando ${ventas.length} ventas`);
+          console.log(`[PARSE] Token CPE-SOL OK — procesando ${ventas.length} ventas`);
 
           for (const doc of ventas as Record<string,unknown>[]) {
             const docId    = doc.id as string;
@@ -961,12 +680,13 @@ export async function PUT(req: NextRequest) {
             const numero   = doc.number as string;
             const tipo     = doc.docType as string;
             const rucEmisor = company.ruc as string; // ventas: emisor = la empresa
+            const rucReceptor = doc.receiverRuc as string || '';
 
-            console.log(`[PARSE] Venta ${docId} — CPE ${tipo}/${serie}/${numero}/${rucEmisor}`);
+            console.log(`[PARSE] Venta ${docId} — CPE-SOL ${tipo}/${serie}/${numero}/${rucEmisor}/${rucReceptor}`);
             try {
-              const cpeResult = await downloadCpeFile(cpeToken, tipo, serie, numero, rucEmisor, 'xml');
+              const cpeResult = await downloadCpeXmlSOL(tokenSOL, tipo, serie, numero, rucEmisor, rucReceptor);
               if (!cpeResult.ok || cpeResult.content.length === 0) {
-                console.log(`[PARSE] ${docId}: XML CPE no disponible — ${cpeResult.error}`);
+                console.log(`[PARSE] ${docId}: XML CPE-SOL no disponible — ${cpeResult.error}`);
                 sinXml++;
                 await updateDocument(docId, { parserStatus: 'SIN_XML' });
                 continue;
@@ -1009,7 +729,7 @@ export async function PUT(req: NextRequest) {
           }
         }
       } catch (e) {
-        console.error('[PARSE] Error procesando ventas via CPE:', (e as Error).message);
+        console.error('[PARSE] Error procesando ventas via CPE-SOL:', (e as Error).message);
         console.error('[PARSE] Stack ventas:', (e as Error).stack?.split('\n').slice(0,3).join(' | '));
         for (const doc of ventas as Record<string,unknown>[]) {
           await updateDocument(doc.id as string, { parserStatus: 'ERROR' });
