@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer';
 
 // ── Sesión HTTP directa (sin browser) ──────────────────────────────
-async function fetchXmlViaSolSession(
+export async function fetchXmlViaSolSession(
   serie: string,
   numero: string,
   tipoCodigo: string,
@@ -40,8 +40,11 @@ async function fetchXmlViaSolSession(
 
     // Descargar XML directamente con las cookies de sesión
     const url =
-      `https://www.sunat.gob.pe/cl-ti-itmrconsrecec/jaxrs/comprobante/xml?` +
-      `codTipo=${tipoCodigo}&numSerie=${serie}&numCorrelativo=${numero}&numRucEmisor=${emisorRuc}`;
+      `https://www.sunat.gob.pe/cl-ti-itmrconsrecec/jaxrs/comprobante/xml` +
+      `?codTipo=${tipoCodigo}` +
+      `&numSerie=${serie}` +
+      `&numCorrelativo=${numero}` +
+      `&numRucEmisor=${emisorRuc}`;
 
     const res = await fetch(url, {
       headers: {
@@ -154,18 +157,18 @@ export async function downloadXmlFromSunat(
     );
     console.log('[SCRAPER] Módulo cargado');
 
-    // Usar fetch dentro del contexto autenticado (sin tocar ningún iframe)
+    // Usar fetch dentro del contexto autenticado (sin esperar selectores)
     console.log('[SCRAPER] Descargando XML via fetch autenticado...');
     const xmlContent = await page.evaluate(
       async ({ tipoCodigo, serie, numero, emisorRuc }) => {
         const url =
-          `https://www.sunat.gob.pe/cl-ti-itmrconsrecec/jaxrs/comprobante/xml?` +
-          `codTipo=${tipoCodigo}&numSerie=${serie}&numCorrelativo=${numero}&numRucEmisor=${emisorRuc}`;
+          `/cl-ti-itmrconsrecec/jaxrs/comprobante/xml` +
+          `?codTipo=${tipoCodigo}&numSerie=${serie}&numCorrelativo=${numero}&numRucEmisor=${emisorRuc}`;
         try {
           const res = await fetch(url, { credentials: 'include' });
           if (!res.ok) return null;
           const text = await res.text();
-          return text && text.length > 100 ? text : null;
+          return text && text.startsWith('<') && text.length > 100 ? text : null;
         } catch {
           return null;
         }
@@ -173,11 +176,13 @@ export async function downloadXmlFromSunat(
       { tipoCodigo, serie: factura.serie, numero: factura.numero, emisorRuc: factura.rucEmisor }
     );
 
-    console.log(
-      `[SCRAPER] ${factura.serie}-${factura.numero}: ${xmlContent ? xmlContent.length + ' bytes' : 'sin XML'}`
-    );
+    if (xmlContent) {
+      console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: ${xmlContent.length} bytes`);
+      return { xmlContent };
+    }
 
-    return { xmlContent: xmlContent as string | null };
+    console.log(`[SCRAPER] ${factura.serie}-${factura.numero}: sin XML`);
+    return { xmlContent: null };
   } catch (error) {
     console.error(`[SCRAPER] Error:`, (error as Error).message);
     return { xmlContent: null, error: (error as Error).message };

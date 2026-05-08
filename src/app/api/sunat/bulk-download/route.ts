@@ -240,7 +240,47 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // 3. Si tampoco hay XML de CPE, intentar scraping como último recurso (solo para COMPRAS)
+              // 3. Si tampoco hay XML de CPE, intentar sesión HTTP directa (sin browser)
+              if (!xmlForLines && op === 'COMPRAS' && cred) {
+                try {
+                  console.log(`[BULK] Intentando sesión HTTP directa para ${docId}...`);
+                  const { fetchXmlViaSolSession } = await import('@/lib/providers/sunat-scraper');
+                  
+                  // Mapear tipo de comprobante
+                  const tipoMap: Record<string, string> = {
+                    '01': '01', // Factura
+                    '03': '03', // Boleta
+                    '07': '07', // Nota de crédito
+                    '08': '08', // Nota de débito
+                  };
+                  const tipoCodigo = tipoMap[doc.tipo] || '01';
+                  
+                  const httpXml = await fetchXmlViaSolSession(
+                    doc.serie,
+                    doc.numero,
+                    tipoCodigo,
+                    doc.rucEmisor,
+                    {
+                      ruc: company.ruc as string,
+                      solUser: cred.solUser as string,
+                      solPass,
+                    }
+                  );
+                  
+                  if (httpXml) {
+                    xmlForLines = httpXml;
+                    console.log(`[BULK] XML HTTP descargado para ${docId}: ${xmlForLines.length} bytes`);
+                    hasXml = true;
+                    await updateDocument(docId, { hasXml: true });
+                  } else {
+                    console.log(`[BULK] HTTP no disponible para ${docId}`);
+                  }
+                } catch (httpErr) {
+                  console.log(`[BULK] Error HTTP para ${docId}: ${(httpErr as Error).message}`);
+                }
+              }
+
+              // 4. Si HTTP también falla, intentar scraping con browser (último recurso)
               if (!xmlForLines && op === 'COMPRAS' && cred) {
                 try {
                   console.log(`[BULK] Intentando scraping para ${docId}...`);
