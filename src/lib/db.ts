@@ -28,7 +28,7 @@ async function queryOne(sql: string, args: unknown[] = []): Promise<Row | null> 
   return res.rows[0] ?? null;
 }
 
-async function queryAll(sql: string, args: unknown[] = []): Promise<Row[]> {
+export async function queryAll(sql: string, args: unknown[] = []): Promise<Row[]> {
   const db = getDb();
   const res = await db.query(sql, args);
   return res.rows;
