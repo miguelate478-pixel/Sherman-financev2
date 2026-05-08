@@ -111,6 +111,11 @@ export async function POST(req: NextRequest) {
     let totalDocs=0,totalXml=0,totalPdf=0,totalCdr=0,totalErrors=0;
     let lastError = '';
 
+    // ── Browser compartido para scraping (se inicializa solo si es necesario) ──
+    let browser: any = null;
+    let browserPage: any = null;
+    let browserAuthenticated = false;
+
     let sireToken='';
     try {
       sireToken = await sunat.getSireToken(
@@ -124,7 +129,8 @@ export async function POST(req: NextRequest) {
       console.error('[BULK] Error obteniendo SIRE token:', (e as Error).message);
     }
 
-    for (const period of periods) {
+    try {
+      for (const period of periods) {
       for (const op of ops) {
         const jpId = await createBulkJobPeriod({ jobId, period, operation:op });
         try {
@@ -238,28 +244,271 @@ export async function POST(req: NextRequest) {
               if (!xmlForLines && op === 'COMPRAS' && cred) {
                 try {
                   console.log(`[BULK] Intentando scraping para ${docId}...`);
-                  const { downloadXmlFromSunat } = await import('@/lib/providers/sunat-scraper');
-                  const scraperResult = await downloadXmlFromSunat(
-                    {
-                      ruc: company.ruc as string,
-                      solUser: cred.solUser as string,
-                      solPass,
-                    },
-                    {
-                      rucEmisor: doc.rucEmisor,
-                      serie: doc.serie,
-                      numero: doc.numero,
+                  
+                  // Inicializar browser solo una vez
+                  if (!browserAuthenticated) {
+                    console.log('[BULK] Inicializando browser compartido...');
+                    const puppeteer = await import('puppeteer');
+                    browser = await puppeteer.default.launch({
+                      headless: true,
+                      args: [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu',
+                        '--no-zygote',
+                        '--single-process',
+                        '--disable-extensions',
+                        '--disable-background-networking',
+                      ],
+                    });
+                    
+                    browserPage = await browser.newPage();
+                    await browserPage.setUserAgent(
+                      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
+                    );
+                    
+                    // LOGIN (solo una vez)
+                    console.log('[BULK] Login en SUNAT...');
+                    await browserPage.goto('https://e-menu.sunat.gob.pe/cl-ti-itmenu/MenuInternet.htm', {
+                      waitUntil: 'networkidle2',
+                      timeout: 30000,
+                    });
+                    await browserPage.waitForSelector('#txtRuc', { timeout: 10000 });
+                    await browserPage.type('#txtRuc', company.ruc as string, { delay: 50 });
+                    await browserPage.type('#txtUsuario', cred.solUser as string, { delay: 50 });
+                    await browserPage.type('#txtContrasena', solPass, { delay: 50 });
+                    await browserPage.click('#btnAceptar');
+                    await browserPage.waitForSelector('#divContainerMenu', { timeout: 15000 });
+                    console.log('[BULK] Login OK - browser autenticado');
+                    
+                    // CLICK EN EMPRESAS (data-id="2")
+                    await browserPage.evaluate(() => {
+                      const empresasDiv =
+                        document.querySelector('div[data-id="2"]') || document.querySelector('#divOpcionServicio2');
+                      if (empresasDiv) {
+                        (empresasDiv as HTMLElement).click();
+                      }
+                    });
+                    await new Promise(r => setTimeout(r, 2000));
+                    
+                    // NAVEGACIÓN POR MENÚ (4 CLICKS)
+                    await browserPage.evaluate(() => {
+                      const el =
+                        document.querySelector('li[data-id2="11"] span.spanNivelDescripcion') ||
+                        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).find(
+                          s => (s as HTMLElement).textContent?.trim() === 'Comprobantes de pago'
+                        );
+                      if (el) (el as HTMLElement).click();
+                    });
+                    await new Promise(r => setTimeout(r, 1500));
+                    
+                    await browserPage.evaluate(() => {
+                      const el =
+                        document.querySelector('li[data-id2="11_38"] span.spanNivelDescripcion') ||
+                        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).filter(
+                          s => (s as HTMLElement).textContent?.trim().toLowerCase() === 'comprobantes de pago'
+                        )[1];
+                      if (el) (el as HTMLElement).click();
+                    });
+                    await new Promise(r => setTimeout(r, 1500));
+                    
+                    await browserPage.evaluate(() => {
+                      const el =
+                        document.querySelector('li[data-id2="11_38_1"] span.spanNivelDescripcion') ||
+                        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).find(
+                          s => (s as HTMLElement).textContent?.trim() === 'Consulta de Comprobantes de Pago'
+                        );
+                      if (el) (el as HTMLElement).click();
+                    });
+                    await new Promise(r => setTimeout(r, 1500));
+                    
+                    await browserPage.evaluate(() => {
+                      const el =
+                        document.querySelector('li[data-id2="11_38_1_1"] span.spanNivelDescripcion') ||
+                        Array.from(document.querySelectorAll('span.spanNivelDescripcion')).find(
+                          s => (s as HTMLElement).textContent?.trim() === 'Nueva Consulta de comprobantes de pago'
+                        );
+                      if (el) (el as HTMLElement).click();
+                    });
+                    await new Promise(r => setTimeout(r, 4000));
+                    
+                    browserAuthenticated = true;
+                    console.log('[BULK] Browser autenticado y navegado al formulario');
+                  }
+                  
+                  // Usar el browser ya autenticado para descargar este documento
+                  console.log(`[BULK] Usando browser compartido para ${docId}...`);
+                  
+                  // BUSCAR FORMULARIO EN IFRAME
+                  let targetFrame = browserPage.mainFrame();
+                  for (const frame of browserPage.frames()) {
+                    try {
+                      const hasForm = await frame.evaluate(
+                        () =>
+                          !!(
+                            document.querySelector('input[formcontrolname="rucEmisor"]') ||
+                            document.querySelector('input[name="rucEmisor"]')
+                          )
+                      );
+                      if (hasForm) {
+                        targetFrame = frame;
+                        break;
+                      }
+                    } catch {}
+                  }
+                  
+                  // LLENAR FORMULARIO
+                  await targetFrame.evaluate(() => {
+                    const r =
+                      (document.querySelector('input[type="radio"][value="RBR"]') as HTMLInputElement) ||
+                      (document.querySelector('input[id="recibido"]') as HTMLInputElement);
+                    if (r) {
+                      r.click();
+                      r.dispatchEvent(new Event('change', { bubbles: true }));
                     }
-                  );
+                  });
+                  await new Promise(r => setTimeout(r, 500));
+                  
+                  // RUC EMISOR
+                  await targetFrame.evaluate((ruc: string) => {
+                    const input =
+                      (document.querySelector('input[formcontrolname="rucEmisor"]') as HTMLInputElement) ||
+                      (document.querySelector('input[name="rucEmisor"]') as HTMLInputElement);
+                    if (!input) return;
+                    input.focus();
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+                    setter.call(input, ruc);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                    input.dispatchEvent(new Event('blur', { bubbles: true }));
+                  }, doc.rucEmisor);
+                  await new Promise(r => setTimeout(r, 500));
+                  
+                  // DROPDOWN FACTURA
+                  await targetFrame.evaluate(() => {
+                    const trigger =
+                      (document.querySelector('div[role="button"][aria-haspopup="listbox"]') as HTMLElement) ||
+                      (document.querySelector('p-dropdown div.p-dropdown-trigger') as HTMLElement);
+                    if (trigger) trigger.click();
+                  });
+                  await new Promise(r => setTimeout(r, 800));
+                  
+                  await targetFrame.evaluate(() => {
+                    const items = Array.from(
+                      document.querySelectorAll('li[role="option"], .p-dropdown-item, li.p-dropdown-item')
+                    );
+                    const factura = items.find(i => (i as HTMLElement).textContent?.trim() === 'Factura');
+                    if (factura) (factura as HTMLElement).click();
+                  });
+                  await new Promise(r => setTimeout(r, 500));
+                  
+                  // SERIE
+                  await targetFrame.evaluate((serie: string) => {
+                    const input =
+                      (document.querySelector('input[formcontrolname="serieComprobante"]') as HTMLInputElement) ||
+                      (document.querySelector('input[name="serieComprobante"]') as HTMLInputElement);
+                    if (!input) return;
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+                    setter.call(input, serie);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                  }, doc.serie);
+                  await new Promise(r => setTimeout(r, 500));
+                  
+                  // NÚMERO
+                  await targetFrame.evaluate((numero: string) => {
+                    const input =
+                      (document.querySelector('input[formcontrolname="numeroComprobante"]') as HTMLInputElement) ||
+                      (document.querySelector('input[name="numeroComprobante"]') as HTMLInputElement);
+                    if (!input) return;
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+                    setter.call(input, numero);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                  }, doc.numero);
+                  await new Promise(r => setTimeout(r, 500));
+                  
+                  // CONSULTAR
+                  await targetFrame.evaluate(() => {
+                    const btn =
+                      (document.querySelector('button.btn.boton-primary') as HTMLElement) ||
+                      (document.querySelector('button[type="submit"]') as HTMLElement) ||
+                      (Array.from(document.querySelectorAll('button')).find(b =>
+                        (b as HTMLElement).textContent?.trim().toLowerCase().includes('consultar')
+                      ) as HTMLElement);
+                    if (btn) btn.click();
+                  });
+                  await new Promise(r => setTimeout(r, 5000));
+                  
+                  // ESPERAR MODAL
+                  await targetFrame.waitForSelector('ngb-modal-window, .modal-dialog, control-cpe-factura', {
+                    timeout: 15000,
+                  });
+                  await new Promise(r => setTimeout(r, 2000));
+                  
+                  // INTERCEPTAR XML
+                  const xmlContent = await new Promise<string | null>(resolve => {
+                    const timeout = setTimeout(() => resolve(null), 15000);
+                    
+                    browserPage.on('response', async (response: any) => {
+                      const url = response.url();
+                      const ct = response.headers()['content-type'] || '';
+                      if (url.includes('.xml') || ct.includes('xml') || ct.includes('octet-stream')) {
+                        try {
+                          const text = await response.text();
+                          if (text.includes('<?xml') || text.includes('<Invoice') || text.includes('<CreditNote')) {
+                            clearTimeout(timeout);
+                            resolve(text);
+                          }
+                        } catch {}
+                      }
+                    });
+                    
+                    // Click en botón XML
+                    targetFrame
+                      .evaluate(() => {
+                        const container = document.querySelector('div.button-container, .button-container');
+                        if (container) {
+                          const buttons = container.querySelectorAll('button');
+                          if (buttons[1]) {
+                            (buttons[1] as HTMLElement).click();
+                            return true;
+                          }
+                        }
+                        
+                        const allBtns = Array.from(document.querySelectorAll('button'));
+                        const xmlBtn = allBtns.find(b => {
+                          const title = ((b as HTMLElement).title || b.getAttribute('aria-label') || '').toLowerCase();
+                          const cls = ((b as HTMLElement).className || '').toLowerCase();
+                          return title.includes('xml') || cls.includes('xml');
+                        });
+                        
+                        if (xmlBtn) {
+                          (xmlBtn as HTMLElement).click();
+                          return true;
+                        }
+                        
+                        const ngxBtns = Array.from(
+                          document.querySelectorAll('ngb-modal-window button, .modal button')
+                        );
+                        if (ngxBtns.length >= 2) {
+                          (ngxBtns[1] as HTMLElement).click();
+                          return true;
+                        }
+                        
+                        return false;
+                      })
+                      .catch(() => {});
+                  });
 
-                  if (scraperResult.xmlContent) {
-                    xmlForLines = scraperResult.xmlContent;
+                  if (xmlContent) {
+                    xmlForLines = xmlContent;
                     console.log(`[BULK] XML scrapeado para ${docId}: ${xmlForLines.length} bytes`);
-                    // Actualizar flags en BD
                     hasXml = true;
                     await updateDocument(docId, { hasXml: true });
                   } else {
-                    console.log(`[BULK] Scraping falló para ${docId}: ${scraperResult.error}`);
+                    console.log(`[BULK] Scraping falló para ${docId}: sin XML`);
                   }
                 } catch (scraperErr) {
                   console.log(`[BULK] Error scraping para ${docId}: ${(scraperErr as Error).message}`);
@@ -335,6 +584,17 @@ export async function POST(req: NextRequest) {
     await updateBulkJob(jobId,{status:finalStatus,docsFound:totalDocs,docsXml:totalXml,docsPdf:totalPdf,docsCdr:totalCdr,errors:totalErrors,completedAt:new Date().toISOString()});
     await createAuditLog({userId:user.sub,userEmail:user.email,userRole:user.role,action:'BULK_DOWNLOAD_COMPLETADO',object:`${periodFrom}→${periodTo} ${operation} ${totalDocs}docs`,ip:getIP(req)});
     return ok({jobId,status:finalStatus,totalDocs,totalXml,totalPdf,totalCdr,totalErrors,lastError:lastError||undefined});
+    } finally {
+      // Cerrar browser compartido si fue inicializado
+      if (browser) {
+        try {
+          await browser.close();
+          console.log('[BULK] Browser compartido cerrado');
+        } catch (e) {
+          console.error('[BULK] Error cerrando browser:', (e as Error).message);
+        }
+      }
+    }
   } catch(e) { return err(`Error: ${(e as Error).message}`,500); }
 }
 
