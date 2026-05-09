@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { getAllCompanies, getCredentialByCompany, createAuditLog, createDocument, findDocumentById } from '@/lib/db';
 import { decrypt } from '@/lib/crypto';
 import { getSunatProvider } from '@/lib/providers/sunat';
+import { runAlertas } from '@/lib/alerts';
 
 export async function GET(req: NextRequest) {
   // Verificar secret para que solo Railway pueda llamarlo
@@ -139,6 +140,13 @@ export async function GET(req: NextRequest) {
         object:    `${company.ruc} período ${period}`,
         ip:        '0.0.0.0',
       });
+
+      // ── Alertas WhatsApp post-descarga ──────────────────
+      try {
+        await runAlertas(company.id as string, company.nombre as string || company.ruc as string);
+      } catch (alertErr) {
+        console.error(`[CRON] Error alertas ${company.ruc}:`, (alertErr as Error).message);
+      }
 
     } catch (e) {
       console.error(`[CRON] Error empresa ${company.ruc}:`, (e as Error).message);

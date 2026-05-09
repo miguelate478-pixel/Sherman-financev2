@@ -396,7 +396,7 @@ const NAV_GROUPS = [
   { g:'Principal', items:[{id:'dashboard',i:'◈',l:'Dashboard'},{id:'bandeja',i:'⊞',l:'Bandeja Contable'}] },
   { g:'SUNAT / SIRE', items:[{id:'sunat_centro',i:'⟳',l:'Centro SUNAT/SIRE'},{id:'descarga_masiva',i:'↓↓',l:'Descarga Masiva',hl:true},{id:'jobs',i:'▷',l:'Jobs y Procesos'},{id:'compras',i:'↓',l:'Compras'},{id:'ventas',i:'↑',l:'Ventas'},{id:'documentos_xml',i:'◉',l:'Docs XML/PDF/CDR'}] },
   { g:'Finanzas', items:[{id:'bancos',i:'⊟',l:'Bancos'},{id:'conciliacion',i:'⇌',l:'Conciliación'},{id:'cxc',i:'→',l:'Cuentas por Cobrar'},{id:'cxp',i:'←',l:'Cuentas por Pagar'},{id:'detracciones',i:'◑',l:'Detracciones'}] },
-  { g:'Reportes & IA', items:[{id:'reportes',i:'📊',l:'Reportes'},{id:'copiloto',i:'✦',l:'Copiloto IA'}] },
+  { g:'Reportes & IA', items:[{id:'reportes',i:'📊',l:'Reportes'},{id:'copiloto',i:'✦',l:'Copiloto IA'},{id:'alertas',i:'🔔',l:'Alertas WhatsApp'}] },
   { g:'Configuración', items:[{id:'ple',i:'◧',l:'PLE Libros'},{id:'concar',i:'⊙',l:'CONCAR SQL'},{id:'empresas',i:'▣',l:'Empresas / RUC'},{id:'usuarios',i:'◎',l:'Usuarios y Roles'},{id:'auditoria',i:'≡',l:'Auditoría'},{id:'configuracion',i:'⚙',l:'Configuración'}] },
 ];
 
@@ -1752,6 +1752,168 @@ function ReportesView({empresa}:{empresa:Company|null}) {
 }
 
 // ══════════════════════════════════════════════════════════
+//  ALERTAS WHATSAPP
+// ══════════════════════════════════════════════════════════
+function AlertasView({empresa,user,addToast}:{empresa:Company|null;user:User|null;addToast:(m:string,t?:ToastType)=>void}) {
+  const [phone,setPhone]=useState('');
+  const [saving,setSaving]=useState(false);
+  const [testing,setTesting]=useState(false);
+  const [running,setRunning]=useState(false);
+  const [status,setStatus]=useState<{pendientes?:Record<string,number>;twilioConfigured?:boolean;logs?:Record<string,unknown>[]}>({});
+  const [loaded,setLoaded]=useState(false);
+
+  useEffect(()=>{
+    if(!empresa?.id) return;
+    fetch(`/api/alerts?companyId=${empresa.id}`,{headers:H()})
+      .then(r=>r.json()).then(d=>{if(d.ok){setStatus(d.data);setLoaded(true);}});
+  },[empresa?.id]);
+
+  const savePhone=async()=>{
+    if(!user?.id||!phone){addToast('Ingresa un número','error');return;}
+    setSaving(true);
+    const r=await fetch('/api/alerts',{method:'POST',headers:H(),body:JSON.stringify({action:'save-phone',userId:user.id,phone})});
+    const d=await r.json();
+    setSaving(false);
+    if(d.ok){addToast(`Teléfono guardado: ${d.data.phone}`,'success');}
+    else addToast(d.error||'Error','error');
+  };
+
+  const testWA=async()=>{
+    if(!phone){addToast('Ingresa un número primero','error');return;}
+    setTesting(true);
+    const r=await fetch('/api/alerts',{method:'POST',headers:H(),body:JSON.stringify({action:'test',phone})});
+    const d=await r.json();
+    setTesting(false);
+    if(d.ok){addToast('✅ Mensaje de prueba enviado','success');}
+    else addToast(d.error||'Error al enviar','error');
+  };
+
+  const runAlertas=async()=>{
+    if(!empresa?.id){addToast('Selecciona empresa','error');return;}
+    setRunning(true);
+    const r=await fetch('/api/alerts',{method:'POST',headers:H(),body:JSON.stringify({action:'run',companyId:empresa.id})});
+    const d=await r.json();
+    setRunning(false);
+    if(d.ok){
+      addToast(`${d.data.total} alertas enviadas`,'success');
+      // Recargar estado
+      fetch(`/api/alerts?companyId=${empresa.id}`,{headers:H()}).then(r=>r.json()).then(d=>{if(d.ok) setStatus(d.data);});
+    } else addToast(d.error||'Error','error');
+  };
+
+  const ALERTAS_INFO=[
+    {icon:'◑',label:'Detracciones por vencer',desc:'Avisa 5 días antes del día 12 del mes',count:status.pendientes?.detracciones,color:C.amber},
+    {icon:'←',label:'CXP críticas',desc:'Facturas de proveedores vencidas o a 3 días',count:status.pendientes?.cxpCriticas,color:C.red},
+    {icon:'→',label:'CXC vencidas',desc:'Facturas de venta sin cobrar',count:status.pendientes?.cxcVencidas,color:C.violet},
+    {icon:'⚠',label:'Docs observados SUNAT',desc:'Comprobantes con observaciones',count:status.pendientes?.observados,color:C.red},
+  ];
+
+  return <div style={{animation:'fadeIn .2s ease',maxWidth:800}}>
+    <div style={{marginBottom:'1.5rem'}}>
+      <div style={{fontSize:22,fontWeight:800,color:C.t1}}>🔔 Alertas WhatsApp</div>
+      <div style={{fontSize:13,color:C.t3,marginTop:4}}>Notificaciones automáticas vía Twilio · Se ejecutan con el cron diario</div>
+    </div>
+
+    {/* Estado Twilio */}
+    <div style={{background:status.twilioConfigured?C.greenL:C.amberL,border:`1px solid ${status.twilioConfigured?C.greenM:C.amberM}`,borderRadius:10,padding:'1rem 1.25rem',marginBottom:'1.5rem',display:'flex',gap:12,alignItems:'center'}}>
+      <span style={{fontSize:24}}>{status.twilioConfigured?'✅':'⚠️'}</span>
+      <div>
+        <div style={{fontWeight:700,color:status.twilioConfigured?C.green:C.amber}}>
+          {status.twilioConfigured?'Twilio configurado — WhatsApp activo':'Twilio no configurado'}
+        </div>
+        <div style={{fontSize:12,color:C.t3,marginTop:2}}>
+          {status.twilioConfigured
+            ?'Las alertas se enviarán automáticamente cada día con el cron.'
+            :'Agrega TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN y TWILIO_WHATSAPP_FROM en las variables de entorno de Railway.'}
+        </div>
+      </div>
+    </div>
+
+    {/* Configurar teléfono */}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1.5rem'}}>
+      <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>📱 Tu número de WhatsApp</div>
+      <div style={{display:'flex',gap:8,alignItems:'flex-end'}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:11,color:C.t4,marginBottom:4}}>Número (con código de país)</div>
+          <input
+            value={phone} onChange={e=>setPhone(e.target.value)}
+            placeholder="+51987654321"
+            style={{width:'100%',padding:'.5rem .75rem',border:`1px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:'JetBrains Mono,monospace'}}
+          />
+          <div style={{fontSize:10,color:C.t4,marginTop:3}}>Formato: +51 seguido de 9 dígitos</div>
+        </div>
+        <Btn color="blue" disabled={saving} onClick={savePhone}>{saving?<Spinner size={13} color="#fff"/>:'💾 Guardar'}</Btn>
+        <Btn color="teal" disabled={testing||!phone} onClick={testWA}>{testing?<Spinner size={13} color="#fff"/>:'📲 Probar'}</Btn>
+      </div>
+    </div>
+
+    {/* Alertas activas */}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1.5rem'}}>
+      <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>📋 Alertas configuradas</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        {ALERTAS_INFO.map(a=>(
+          <div key={a.label} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:'1rem',display:'flex',gap:12,alignItems:'center'}}>
+            <div style={{fontSize:24,width:36,textAlign:'center',flexShrink:0}}>{a.icon}</div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.t1}}>{a.label}</div>
+              <div style={{fontSize:11,color:C.t3,marginTop:2}}>{a.desc}</div>
+            </div>
+            {loaded&&<div style={{fontSize:20,fontWeight:800,color:a.count&&a.count>0?a.color:C.t5,flexShrink:0}}>{a.count??'—'}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+
+    {/* Ejecutar manualmente */}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1.5rem'}}>
+      <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'.5rem'}}>⚡ Ejecutar alertas ahora</div>
+      <div style={{fontSize:12,color:C.t3,marginBottom:'1rem'}}>Envía todas las alertas pendientes inmediatamente sin esperar el cron.</div>
+      <Btn color="blue" disabled={running||!empresa?.id} onClick={runAlertas}>
+        {running?<><Spinner size={13} color="#fff"/>Enviando...</>:'🔔 Enviar alertas ahora'}
+      </Btn>
+    </div>
+
+    {/* Historial */}
+    {status.logs&&status.logs.length>0&&(
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+        <div style={{padding:'1rem 1.25rem',borderBottom:`1px solid ${C.border}`,fontSize:14,fontWeight:700}}>📜 Historial reciente</div>
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead><tr><Th>Tipo</Th><Th>Referencia</Th><Th>Fecha</Th></tr></thead>
+          <tbody>
+            {status.logs.slice(0,10).map((l,i)=>(
+              <tr key={i} style={{background:i%2===0?C.card:C.bg}}>
+                <Td><Badge label={String(l.tipo)} color="blue" sm/></Td>
+                <Td mono small>{String(l.ref)}</Td>
+                <Td small muted>{String(l.fecha)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+
+    {/* Instrucciones Railway */}
+    {!status.twilioConfigured&&(
+      <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginTop:'1.5rem'}}>
+        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>🚀 Cómo configurar en Railway</div>
+        <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,background:'#0D1117',color:'#93C5FD',borderRadius:8,padding:'1rem',lineHeight:2}}>
+          <div style={{color:'#6B7280'}}># Variables de entorno en Railway → Settings → Variables</div>
+          <div>TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div>
+          <div>TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div>
+          <div>TWILIO_WHATSAPP_FROM=whatsapp:+14155238886</div>
+        </div>
+        <div style={{fontSize:11,color:C.t3,marginTop:'1rem',lineHeight:1.8}}>
+          1. Crea cuenta en <strong>twilio.com</strong> (gratis para pruebas)<br/>
+          2. Activa el Sandbox de WhatsApp en Twilio Console<br/>
+          3. Agrega las 3 variables en Railway<br/>
+          4. Redeploy automático
+        </div>
+      </div>
+    )}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════
 //  COPILOTO IA
 // ══════════════════════════════════════════════════════════
 function CopilotoView({docs,movs,detrs}:{docs:Doc[];movs:BankMov[];detrs:Detraccion[]}) {
@@ -2361,6 +2523,7 @@ export default function Dashboard() {
     detracciones: <DetraccionesView detrs={detrs} addToast={addToast}/>,
     reportes:     <ReportesView empresa={empresa}/>,
     copiloto:     <CopilotoView docs={docs} movs={movs} detrs={detrs}/>,
+    alertas:      <AlertasView empresa={empresa} user={user} addToast={addToast}/>,
     concar:       <ConcarView docs={docs} empresa={empresa} addToast={addToast} period={period}/>,
     ple:          <PleView empresa={empresa} period={period} docs={docs} addToast={addToast}/>,
     empresas:     <EmpresasView empresas={empresas} onRefresh={refreshEmpresas} addToast={addToast}/>,
