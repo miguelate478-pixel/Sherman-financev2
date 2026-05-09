@@ -393,7 +393,7 @@ function Login({onLogin}:{onLogin:(u:User)=>void}) {
 //  NAVIGATION
 // ══════════════════════════════════════════════════════════
 const NAV_GROUPS = [
-  { g:'Principal', items:[{id:'dashboard',i:'◈',l:'Dashboard'},{id:'bandeja',i:'⊞',l:'Bandeja Contable'}] },
+  { g:'Principal', items:[{id:'dashboard',i:'◈',l:'Dashboard'},{id:'bandeja',i:'⊞',l:'Bandeja Contable'},{id:'multiempresa',i:'🏢',l:'Multi-Empresa',adminOnly:true}] },
   { g:'SUNAT / SIRE', items:[{id:'sunat_centro',i:'⟳',l:'Centro SUNAT/SIRE'},{id:'descarga_masiva',i:'↓↓',l:'Descarga Masiva',hl:true},{id:'jobs',i:'▷',l:'Jobs y Procesos'},{id:'compras',i:'↓',l:'Compras'},{id:'ventas',i:'↑',l:'Ventas'},{id:'documentos_xml',i:'◉',l:'Docs XML/PDF/CDR'}] },
   { g:'Finanzas', items:[{id:'bancos',i:'⊟',l:'Bancos'},{id:'conciliacion',i:'⇌',l:'Conciliación'},{id:'cxc',i:'→',l:'Cuentas por Cobrar'},{id:'cxp',i:'←',l:'Cuentas por Pagar'},{id:'detracciones',i:'◑',l:'Detracciones'}] },
   { g:'Reportes & IA', items:[{id:'reportes',i:'📊',l:'Reportes'},{id:'copiloto',i:'✦',l:'Copiloto IA'},{id:'alertas',i:'🔔',l:'Alertas WhatsApp'}] },
@@ -412,7 +412,7 @@ function Sidebar({active,onNav,user}:{active:string;onNav:(id:string)=>void;user
     <div style={{flex:1,padding:'.4rem 0'}}>
       {NAV_GROUPS.map(g=><div key={g.g}>
         <div style={{fontSize:9,fontWeight:700,color:'rgba(255,255,255,.22)',letterSpacing:2,textTransform:'uppercase',padding:'.6rem 1rem .25rem'}}>{g.g}</div>
-        {g.items.map(n=><div key={n.id} onClick={()=>onNav(n.id)} style={{display:'flex',alignItems:'center',gap:8,padding:'.44rem 1rem',cursor:'pointer',fontSize:12,background:active===n.id?'rgba(37,99,235,.22)':'transparent',borderLeft:active===n.id?`3px solid ${C.blue}`:'3px solid transparent',color:active===n.id?'#fff':'rgba(255,255,255,.52)',transition:'all .12s'}}>
+        {g.items.filter(n=>(n as {adminOnly?:boolean}).adminOnly ? user.role==='Administrador' : true).map(n=><div key={n.id} onClick={()=>onNav(n.id)} style={{display:'flex',alignItems:'center',gap:8,padding:'.44rem 1rem',cursor:'pointer',fontSize:12,background:active===n.id?'rgba(37,99,235,.22)':'transparent',borderLeft:active===n.id?`3px solid ${C.blue}`:'3px solid transparent',color:active===n.id?'#fff':'rgba(255,255,255,.52)',transition:'all .12s'}}>
           <span style={{width:16,textAlign:'center'}}>{n.i}</span>
           <span style={{flex:1,fontWeight:(n as {hl?:boolean}).hl?700:400}}>{n.l}</span>
         </div>)}
@@ -1642,12 +1642,34 @@ function ReportesView({empresa}:{empresa:Company|null}) {
   const [data,setData]=useState<Record<string,unknown>|null>(null);
   const [loading,setLoading]=useState(false);
   const [period,setPeriod]=useState('2026-04');
+  const [pdfLoading,setPdfLoading]=useState(false);
+  const [emailLoading,setEmailLoading]=useState(false);
+  const [emailDest,setEmailDest]=useState('');
 
   useEffect(()=>{
     if(!empresa?.id) return;
     setLoading(true);
     API.getReports(empresa.id,period).then(r=>{if(r.ok)setData(r.data);setLoading(false);});
   },[empresa?.id,period]);
+
+  const descargarPDF=()=>{
+    if(!empresa?.id) return;
+    setPdfLoading(true);
+    const url=`/api/reports/cliente-pdf?companyId=${empresa.id}&period=${period}&token=${gT()}`;
+    const a=document.createElement('a'); a.href=url; a.download=`Reporte_${empresa.ruc}_${period}.pdf`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>setPdfLoading(false),2000);
+  };
+
+  const enviarEmail=async()=>{
+    if(!empresa?.id||!emailDest){return;}
+    setEmailLoading(true);
+    const r=await fetch(`/api/reports/cliente-pdf?companyId=${empresa.id}&period=${period}&sendEmail=${encodeURIComponent(emailDest)}`,{headers:H()});
+    const d=await r.json();
+    setEmailLoading(false);
+    if(d.ok) alert(`✅ Email enviado a ${emailDest}`);
+    else alert(`❌ Error: ${d.error||'No se pudo enviar'}`);
+  };
 
   if(loading) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',padding:'4rem'}}><Spinner size={32}/></div>;
   if(!data) return <EmptyState icon="📊" title="Sin datos" sub="Selecciona una empresa para ver reportes."/>;
@@ -1661,12 +1683,24 @@ function ReportesView({empresa}:{empresa:Company|null}) {
   const fmt2    = (n:number)=>new Intl.NumberFormat('es-PE',{style:'currency',currency:'PEN',minimumFractionDigits:0}).format(n);
 
   return <div style={{animation:'fadeIn .2s ease'}}>
-    <div style={{marginBottom:'1.25rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+    <div style={{marginBottom:'1.25rem',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
       <div><div style={{fontSize:22,fontWeight:800,color:C.t1}}>Reportes</div>
         <div style={{fontSize:13,color:C.t3}}>Datos reales de la BD · {empresa?.nombre}</div></div>
-      <select value={period} onChange={e=>setPeriod(e.target.value)} style={{padding:'.4rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:12,fontFamily:'Inter,system-ui,sans-serif'}}>
-        {PERIOD_OPTIONS.map(p=><option key={p}>{p}</option>)}
-      </select>
+      <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+        <select value={period} onChange={e=>setPeriod(e.target.value)} style={{padding:'.4rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:12,fontFamily:'Inter,system-ui,sans-serif'}}>
+          {PERIOD_OPTIONS.map(p=><option key={p}>{p}</option>)}
+        </select>
+        <Btn color="navy" size="sm" disabled={pdfLoading} onClick={descargarPDF}>
+          {pdfLoading?<><Spinner size={12} color="#fff"/>Generando...</>:'📄 Reporte para Cliente'}
+        </Btn>
+        <div style={{display:'flex',gap:4}}>
+          <input value={emailDest} onChange={e=>setEmailDest(e.target.value)} placeholder="email@cliente.com"
+            style={{padding:'.3rem .6rem',border:`1px solid ${C.border}`,borderRadius:6,fontSize:12,width:160}}/>
+          <Btn color="teal" size="sm" disabled={emailLoading||!emailDest} onClick={enviarEmail}>
+            {emailLoading?<><Spinner size={12} color="#fff"/>...</>:'📧 Enviar'}
+          </Btn>
+        </div>
+      </div>
     </div>
 
     {/* KPI ROW */}
@@ -1748,6 +1782,138 @@ function ReportesView({empresa}:{empresa:Company|null}) {
 
       {topAcc.length===0&&topSup.length===0&&<div style={{gridColumn:'1/-1'}}><EmptyState icon="📊" title="Ejecuta una descarga masiva" sub="Los reportes se generan con datos reales de la BD tras descargar comprobantes de SUNAT."/></div>}
     </div>
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════
+//  MULTI-EMPRESA DASHBOARD (solo Administrador)
+// ══════════════════════════════════════════════════════════
+function MultiEmpresaView({user}:{user:User|null}) {
+  const [period,setPeriod]=useState(PERIOD_OPTIONS[1]);
+  const [data,setData]=useState<{empresas:Record<string,unknown>[];total:number}|null>(null);
+  const [loading,setLoading]=useState(false);
+
+  const MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const periodoLabel=(p:string)=>{const[y,m]=p.split('-');return `${MESES[parseInt(m)-1]} ${y}`;};
+  const fmtS=(n:number)=>'S/ '+new Intl.NumberFormat('es-PE',{minimumFractionDigits:2}).format(Math.abs(n));
+
+  useEffect(()=>{
+    setLoading(true);
+    fetch(`/api/dashboard/multiempresa?period=${period}`,{headers:H()})
+      .then(r=>r.json()).then(d=>{if(d.ok)setData(d.data);setLoading(false);});
+  },[period]);
+
+  if(user?.role!=='Administrador') return <EmptyState icon="🔒" title="Acceso restringido" sub="Solo Administradores pueden ver este módulo."/>;
+
+  const SEMAFORO:{[k:string]:{bg:string;border:string;dot:string;label:string}}={
+    verde:  {bg:C.greenL, border:C.greenM, dot:C.green,  label:'Al día'},
+    amarillo:{bg:C.amberL,border:C.amberM, dot:C.amber,  label:'Pendientes'},
+    rojo:   {bg:C.redL,   border:C.redM,   dot:C.red,    label:'Urgente'},
+  };
+
+  return <div style={{animation:'fadeIn .2s ease'}}>
+    <div style={{marginBottom:'1.5rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <div>
+        <div style={{fontSize:22,fontWeight:800,color:C.t1}}>🏢 Dashboard Multi-Empresa</div>
+        <div style={{fontSize:13,color:C.t3,marginTop:4}}>Vista consolidada · {data?.total||0} empresas activas · {periodoLabel(period)}</div>
+      </div>
+      <select value={period} onChange={e=>setPeriod(e.target.value)}
+        style={{padding:'.45rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:'Inter,system-ui,sans-serif'}}>
+        {PERIOD_OPTIONS.map(p=><option key={p} value={p}>{periodoLabel(p)}</option>)}
+      </select>
+    </div>
+
+    {/* Leyenda semáforo */}
+    <div style={{display:'flex',gap:12,marginBottom:'1.25rem'}}>
+      {Object.entries(SEMAFORO).map(([k,s])=>(
+        <div key={k} style={{display:'flex',alignItems:'center',gap:6,background:s.bg,border:`1px solid ${s.border}`,borderRadius:6,padding:'4px 12px',fontSize:12}}>
+          <span style={{width:8,height:8,borderRadius:'50%',background:s.dot,display:'inline-block'}}/>
+          <span style={{color:C.t2,fontWeight:600}}>{s.label}</span>
+        </div>
+      ))}
+    </div>
+
+    {loading&&<div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><Spinner size={32}/></div>}
+
+    {!loading&&data&&(
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:14}}>
+        {data.empresas.map((e:Record<string,unknown>)=>{
+          const sem=SEMAFORO[e.semaforo as string]||SEMAFORO.verde;
+          return <div key={e.id as string} style={{background:C.card,border:`1px solid ${sem.border}`,borderRadius:12,overflow:'hidden',boxShadow:'0 1px 4px rgba(0,0,0,.06)'}}>
+            {/* Header empresa */}
+            <div style={{background:sem.bg,padding:'12px 16px',borderBottom:`1px solid ${sem.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:C.t1}}>{String(e.nombre).substring(0,30)}</div>
+                <div style={{fontSize:11,color:C.t3,fontFamily:'JetBrains Mono,monospace',marginTop:2}}>RUC: {String(e.ruc)}</div>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4}}>
+                <div style={{display:'flex',alignItems:'center',gap:5,background:'#fff',borderRadius:20,padding:'3px 10px',border:`1px solid ${sem.border}`}}>
+                  <span style={{width:7,height:7,borderRadius:'50%',background:sem.dot,display:'inline-block'}}/>
+                  <span style={{fontSize:11,fontWeight:700,color:sem.dot}}>{sem.label}</span>
+                </div>
+                <Badge label={String(e.credEstado)} color={e.credEstado==='verified'?'green':e.credEstado==='pending'?'amber':'gray'} sm/>
+              </div>
+            </div>
+
+            {/* KPIs */}
+            <div style={{padding:'12px 16px'}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+                <div style={{background:C.bg,borderRadius:7,padding:'8px 10px'}}>
+                  <div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:2}}>Compras</div>
+                  <div style={{fontSize:14,fontWeight:800,color:C.blue}}>{fmtS(e.totalCompras as number)}</div>
+                  <div style={{fontSize:10,color:C.t4}}>{e.docsCompras as number} docs</div>
+                </div>
+                <div style={{background:C.bg,borderRadius:7,padding:'8px 10px'}}>
+                  <div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:2}}>Ventas</div>
+                  <div style={{fontSize:14,fontWeight:800,color:C.violet}}>{fmtS(e.totalVentas as number)}</div>
+                  <div style={{fontSize:10,color:C.t4}}>{e.docsVentas as number} docs</div>
+                </div>
+              </div>
+
+              {/* IGV Neto */}
+              <div style={{background:C.bg,borderRadius:7,padding:'8px 10px',marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div style={{fontSize:11,color:C.t3}}>IGV Neto a Pagar</div>
+                <div style={{fontSize:14,fontWeight:800,color:(e.igvNeto as number)>0?C.red:C.green}}>{fmtS(e.igvNeto as number)}</div>
+              </div>
+
+              {/* Alertas */}
+              {((e.detrPendN as number)>0||(e.cxpVencN as number)>0||(e.obsN as number)>0)&&(
+                <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                  {(e.detrPendN as number)>0&&(
+                    <div style={{background:C.amberL,border:`1px solid ${C.amberM}`,borderRadius:6,padding:'6px 10px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:11,color:C.amber,fontWeight:600}}>◑ {e.detrPendN as number} detracción{(e.detrPendN as number)>1?'es':''} pendiente{(e.detrPendN as number)>1?'s':''}</span>
+                      <span style={{fontSize:11,fontWeight:700,color:C.amber}}>{fmtS(e.detrMonto as number)}</span>
+                    </div>
+                  )}
+                  {(e.cxpVencN as number)>0&&(
+                    <div style={{background:C.redL,border:`1px solid ${C.redM}`,borderRadius:6,padding:'6px 10px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:11,color:C.red,fontWeight:600}}>← {e.cxpVencN as number} CXP vencida{(e.cxpVencN as number)>1?'s':''}</span>
+                      <span style={{fontSize:11,fontWeight:700,color:C.red}}>{fmtS(e.cxpMonto as number)}</span>
+                    </div>
+                  )}
+                  {(e.obsN as number)>0&&(
+                    <div style={{background:C.redL,border:`1px solid ${C.redM}`,borderRadius:6,padding:'6px 10px'}}>
+                      <span style={{fontSize:11,color:C.red,fontWeight:600}}>⚠ {e.obsN as number} doc{(e.obsN as number)>1?'s':''} observado{(e.obsN as number)>1?'s':''} en SUNAT</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Fecha límite detracciones */}
+              {(e.detrPendN as number)>0&&(
+                <div style={{marginTop:8,fontSize:10,color:C.t4,textAlign:'right'}}>
+                  Límite depósito: <strong style={{color:C.amber}}>{String(e.fechaLimiteDetr)}</strong>
+                </div>
+              )}
+            </div>
+          </div>;
+        })}
+      </div>
+    )}
+
+    {!loading&&data&&data.empresas.length===0&&(
+      <EmptyState icon="🏢" title="Sin empresas activas" sub="Agrega empresas en el módulo Empresas."/>
+    )}
   </div>;
 }
 
@@ -2532,6 +2698,7 @@ export default function Dashboard() {
     reportes:     <ReportesView empresa={empresa}/>,
     copiloto:     <CopilotoView docs={docs} movs={movs} detrs={detrs}/>,
     alertas:      <AlertasView empresa={empresa} user={user} addToast={addToast}/>,
+    multiempresa: <MultiEmpresaView user={user}/>,
     concar:       <ConcarView docs={docs} empresa={empresa} addToast={addToast} period={period}/>,
     ple:          <PleView empresa={empresa} period={period} docs={docs} addToast={addToast}/>,
     empresas:     <EmpresasView empresas={empresas} onRefresh={refreshEmpresas} addToast={addToast}/>,
