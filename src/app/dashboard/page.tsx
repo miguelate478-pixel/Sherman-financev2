@@ -393,11 +393,44 @@ function Login({onLogin}:{onLogin:(u:User)=>void}) {
 //  NAVIGATION
 // ══════════════════════════════════════════════════════════
 const NAV_GROUPS = [
-  { g:'Principal', items:[{id:'dashboard',i:'◈',l:'Dashboard'},{id:'bandeja',i:'⊞',l:'Bandeja Contable'},{id:'multiempresa',i:'🏢',l:'Multi-Empresa',adminOnly:true},{id:'panel_clientes',i:'👥',l:'Panel de Clientes',adminOnly:true}] },
-  { g:'SUNAT / SIRE', items:[{id:'sunat_centro',i:'⟳',l:'Centro SUNAT/SIRE'},{id:'descarga_masiva',i:'↓↓',l:'Descarga Masiva',hl:true},{id:'jobs',i:'▷',l:'Jobs y Procesos'},{id:'compras',i:'↓',l:'Compras'},{id:'ventas',i:'↑',l:'Ventas'},{id:'documentos_xml',i:'◉',l:'Docs XML/PDF/CDR'}] },
-  { g:'Finanzas', items:[{id:'bancos',i:'⊟',l:'Bancos'},{id:'conciliacion',i:'⇌',l:'Conciliación'},{id:'cxc',i:'→',l:'Cuentas por Cobrar'},{id:'cxp',i:'←',l:'Cuentas por Pagar'},{id:'detracciones',i:'◑',l:'Detracciones'}] },
-  { g:'Reportes & IA', items:[{id:'reportes',i:'📊',l:'Reportes'},{id:'copiloto',i:'✦',l:'Copiloto IA'},{id:'alertas',i:'🔔',l:'Alertas Email'},{id:'calculadora',i:'🧮',l:'Calculadora IGV/Renta'},{id:'calendario',i:'📅',l:'Calendario Tributario'}] },
-  { g:'Configuración', items:[{id:'ple',i:'◧',l:'PLE Libros'},{id:'concar',i:'⊙',l:'CONCAR SQL'},{id:'empresas',i:'▣',l:'Empresas / RUC'},{id:'usuarios',i:'◎',l:'Usuarios y Roles'},{id:'auditoria',i:'≡',l:'Auditoría'},{id:'configuracion',i:'⚙',l:'Configuración'}] },
+  { g:'Principal', items:[
+    {id:'dashboard',      i:'◈',  l:'Dashboard'},
+    {id:'bandeja',        i:'⊞',  l:'Bandeja Contable'},
+    {id:'multiempresa',   i:'🏢', l:'Multi-Empresa',    adminOnly:true},
+    {id:'panel_clientes', i:'👥', l:'Panel de Clientes', adminOnly:true},
+  ]},
+  { g:'SUNAT / SIRE', items:[
+    {id:'sunat_centro',   i:'⟳',  l:'Centro SUNAT/SIRE'},
+    {id:'descarga_masiva',i:'↓↓', l:'Descarga Masiva', hl:true},
+    {id:'jobs',           i:'▷',  l:'Jobs y Procesos'},
+    {id:'buzon_sol',      i:'📬', l:'Buzón SOL'},
+  ]},
+  { g:'Documentos', items:[
+    {id:'compras',        i:'↓',  l:'Compras'},
+    {id:'ventas',         i:'↑',  l:'Ventas'},
+    {id:'documentos_xml', i:'◉',  l:'Archivos SUNAT'},
+  ]},
+  { g:'Finanzas', items:[
+    {id:'bancos',         i:'⊟',  l:'Bancos'},
+    {id:'conciliacion',   i:'⇌',  l:'Conciliación'},
+    {id:'cxc',            i:'→',  l:'Cuentas por Cobrar'},
+    {id:'cxp',            i:'←',  l:'Cuentas por Pagar'},
+    {id:'detracciones',   i:'◑',  l:'Detracciones'},
+  ]},
+  { g:'Reportes & IA', items:[
+    {id:'reportes',       i:'📊', l:'Reportes'},
+    {id:'calculadora',    i:'🧮', l:'Calculadora IGV/Renta'},
+    {id:'calendario',     i:'📅', l:'Calendario Tributario'},
+    {id:'copiloto',       i:'✦',  l:'Copiloto IA'},
+    {id:'alertas',        i:'🔔', l:'Alertas Email'},
+  ]},
+  { g:'Configuración', items:[
+    {id:'ple',            i:'◧',  l:'PLE Libros',       adminOnly:true},
+    {id:'concar',         i:'⊙',  l:'CONCAR SQL'},
+    {id:'empresas',       i:'▣',  l:'Empresas / RUC'},
+    {id:'usuarios',       i:'◎',  l:'Usuarios y Roles', adminOnly:true},
+    {id:'configuracion',  i:'⚙',  l:'Configuración'},
+  ]},
 ];
 
 function Sidebar({active,onNav,user}:{active:string;onNav:(id:string)=>void;user:User}) {
@@ -1918,7 +1951,7 @@ function PanelClientesView({user,onNav}:{user:User|null;onNav:(id:string)=>void}
                     </Td>
                     <Td center>
                       <div style={{display:'flex',gap:6,justifyContent:'center'}}>
-                        <Btn size="sm" color="ghost" onClick={()=>{/* navegar a empresa */}}>Ver</Btn>
+                        <Btn size="sm" color="ghost" onClick={()=>onNav('dashboard')}>Ver</Btn>
                         <Btn size="sm" color={e.status==='activo'?'red':'green'} disabled={updating===e.id as string}
                           onClick={()=>toggleStatus(e.id as string,e.status as string)}>
                           {updating===e.id as string?<Spinner size={11} color="#fff"/>:e.status==='activo'?'Desactivar':'Activar'}
@@ -1933,6 +1966,15 @@ function PanelClientesView({user,onNav}:{user:User|null;onNav:(id:string)=>void}
         )}
       </div>
     )}
+
+    {/* AUDITORÍA integrada */}
+    <div style={{marginTop:'1.5rem'}}>
+      <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'1rem',display:'flex',alignItems:'center',gap:8}}>
+        <span>≡</span> Auditoría de Acciones
+        <Btn size="sm" color="ghost" onClick={()=>onNav('auditoria')}>Ver completa →</Btn>
+      </div>
+      <AuditoriaView logs={[]} empresa={null} period={PERIOD_OPTIONS[1]}/>
+    </div>
   </div>;
 }
 
@@ -2747,6 +2789,101 @@ function ConfigView({addToast,user}:{addToast:(m:string,t?:ToastType)=>void;user
   </div>;
 }
 
+// ══════════════════════════════════════════════════════════
+//  BUZÓN SOL
+// ══════════════════════════════════════════════════════════
+function BuzonSOLView({empresa,addToast}:{empresa:Company|null;addToast:(m:string,t?:ToastType)=>void}) {
+  const [loading,setLoading]=useState(false);
+  const [result,setResult]=useState<Record<string,unknown>|null>(null);
+
+  const consultar=async()=>{
+    if(!empresa?.id){addToast('Selecciona empresa','error');return;}
+    setLoading(true);
+    try{
+      const r=await fetch(`/api/sunat/test-connection?companyId=${empresa.id}`,{headers:H()});
+      const d=await r.json();
+      setResult(d.data||d);
+    }catch(e){addToast((e as Error).message,'error');}
+    setLoading(false);
+  };
+
+  return <div style={{animation:'fadeIn .2s ease',maxWidth:700}}>
+    <div style={{marginBottom:'1.5rem'}}>
+      <div style={{fontSize:22,fontWeight:800,color:C.t1}}>📬 Buzón SOL</div>
+      <div style={{fontSize:13,color:C.t3,marginTop:4}}>Consulta el estado de conexión con SUNAT · Credenciales SOL · CPE · SIRE</div>
+    </div>
+
+    {/* Estado empresa */}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1rem'}}>
+      <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>Empresa activa</div>
+      {empresa ? (
+        <div style={{display:'flex',gap:12,alignItems:'center'}}>
+          <div style={{width:44,height:44,borderRadius:10,background:C.blueM,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,fontWeight:900,color:C.blue,flexShrink:0}}>
+            {(empresa.nombre||'?')[0].toUpperCase()}
+          </div>
+          <div>
+            <div style={{fontSize:14,fontWeight:700,color:C.t1}}>{empresa.nombre}</div>
+            <div style={{fontSize:12,color:C.t4,fontFamily:'JetBrains Mono,monospace'}}>RUC: {empresa.ruc}</div>
+          </div>
+          <div style={{marginLeft:'auto'}}>
+            <Badge label={empresa.credEstado==='configuradas'?'✓ Credenciales OK':'Sin credenciales'} color={empresa.credEstado==='configuradas'?'green':'red'}/>
+          </div>
+        </div>
+      ) : (
+        <div style={{color:C.t4,fontSize:13}}>Selecciona una empresa en el selector superior.</div>
+      )}
+    </div>
+
+    {/* Test de conexión */}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1rem'}}>
+      <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'.75rem'}}>Diagnóstico de conexión SUNAT</div>
+      <div style={{fontSize:12,color:C.t3,marginBottom:'1rem',lineHeight:1.7}}>
+        Verifica que las credenciales SOL estén correctas y que los tokens CPE y SIRE se puedan obtener.
+      </div>
+      <Btn color="blue" disabled={loading||!empresa?.id} onClick={consultar}>
+        {loading?<><Spinner size={13} color="#fff"/>Consultando SUNAT...</>:'🔌 Probar conexión SOL'}
+      </Btn>
+    </div>
+
+    {/* Resultado */}
+    {result&&(
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1rem'}}>
+        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>Resultado del diagnóstico</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          {[
+            ['Estado RUC',    (result.estadoRuc as string)||'—',     (result.estadoRuc as string)==='ACTIVO'],
+            ['Token CPE',     (result.hasCpeToken as boolean)?'OK':'Error', !!(result.hasCpeToken)],
+            ['Token SIRE',    (result.hasSireToken as boolean)?'OK':'Error', !!(result.hasSireToken)],
+            ['Credenciales',  (result.status as string)||'—',        (result.status as string)==='verified'],
+          ].map(([l,v,ok])=>(
+            <div key={l as string} style={{background:C.bg,borderRadius:8,padding:'.75rem 1rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:12,color:C.t3}}>{l as string}</span>
+              <span style={{fontSize:12,fontWeight:700,color:(ok as boolean)?C.green:C.red}}>{v as string}</span>
+            </div>
+          ))}
+        </div>
+        {!!result.error&&(
+          <div style={{background:C.redL,border:`1px solid ${C.redM}`,borderRadius:8,padding:'.75rem 1rem',marginTop:'1rem',fontSize:12,color:C.red}}>
+            ⚠ {String(result.error as string)}
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* Info credenciales */}
+    <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem'}}>
+      <div style={{fontSize:12,fontWeight:700,color:C.t2,marginBottom:'.75rem'}}>¿Dónde obtener las credenciales?</div>
+      <div style={{fontSize:12,color:C.t3,lineHeight:2}}>
+        1. Ingresa a <strong style={{color:C.t2}}>sol.sunat.gob.pe</strong> con tu usuario SOL<br/>
+        2. Ve a <strong style={{color:C.t2}}>Empresas → Credenciales API SUNAT</strong><br/>
+        3. Registra una nueva aplicación tipo <strong style={{color:C.t2}}>Consulta Integrada CPE</strong><br/>
+        4. Copia el <strong style={{color:C.t2}}>Client ID</strong> y <strong style={{color:C.t2}}>Client Secret</strong><br/>
+        5. Guárdalos en <strong style={{color:C.blue}}>Configuración → Empresas / RUC → Credenciales SOL</strong>
+      </div>
+    </div>
+  </div>;
+}
+
 function JobsView({empresa}:{empresa:Company|null}) {
   const [jobs,setJobs]=useState<Record<string,unknown>[]>([]);
   useEffect(()=>{if(empresa?.id) API.jobs(empresa.id).then(setJobs);},[empresa?.id]);
@@ -2837,7 +2974,7 @@ export default function Dashboard() {
     bandeja:      <DocTableView docs={docs} titulo="Bandeja Contable" sub="Todos los documentos" addToast={addToast} onRefresh={refreshData}/>,
     sunat_centro: <SunatCentroView empresa={empresa} addToast={addToast} onNav={setActive}/>,
     descarga_masiva:<DescargaMasivaView empresa={empresa} addToast={addToast} onRefresh={refreshData} onSetPeriod={setPeriod} period={period}/>,
-    jobs:         <JobsView empresa={empresa}/>,
+    buzon_sol:    <BuzonSOLView empresa={empresa} addToast={addToast}/>,
     compras:      <DocTableView docs={compras} titulo="Compras — Comprobantes recibidos" sub="SUNAT/SIRE" addToast={addToast} onRefresh={refreshData} exportType="COMPRA" empresa={empresa} period={period}/>,
     ventas:       <DocTableView docs={ventas}  titulo="Ventas — Comprobantes emitidos"   sub="SUNAT/SIRE" addToast={addToast} onRefresh={refreshData} exportType="VENTA"  empresa={empresa} period={period}/>,
     documentos_xml:<DocumentosXmlView docs={docs} empresa={empresa} addToast={addToast} onRefresh={refreshData}/>,
