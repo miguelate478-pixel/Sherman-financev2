@@ -393,7 +393,7 @@ function Login({onLogin}:{onLogin:(u:User)=>void}) {
 //  NAVIGATION
 // ══════════════════════════════════════════════════════════
 const NAV_GROUPS = [
-  { g:'Principal', items:[{id:'dashboard',i:'◈',l:'Dashboard'},{id:'bandeja',i:'⊞',l:'Bandeja Contable'},{id:'multiempresa',i:'🏢',l:'Multi-Empresa',adminOnly:true}] },
+  { g:'Principal', items:[{id:'dashboard',i:'◈',l:'Dashboard'},{id:'bandeja',i:'⊞',l:'Bandeja Contable'},{id:'multiempresa',i:'🏢',l:'Multi-Empresa',adminOnly:true},{id:'panel_clientes',i:'👥',l:'Panel de Clientes',adminOnly:true}] },
   { g:'SUNAT / SIRE', items:[{id:'sunat_centro',i:'⟳',l:'Centro SUNAT/SIRE'},{id:'descarga_masiva',i:'↓↓',l:'Descarga Masiva',hl:true},{id:'jobs',i:'▷',l:'Jobs y Procesos'},{id:'compras',i:'↓',l:'Compras'},{id:'ventas',i:'↑',l:'Ventas'},{id:'documentos_xml',i:'◉',l:'Docs XML/PDF/CDR'}] },
   { g:'Finanzas', items:[{id:'bancos',i:'⊟',l:'Bancos'},{id:'conciliacion',i:'⇌',l:'Conciliación'},{id:'cxc',i:'→',l:'Cuentas por Cobrar'},{id:'cxp',i:'←',l:'Cuentas por Pagar'},{id:'detracciones',i:'◑',l:'Detracciones'}] },
   { g:'Reportes & IA', items:[{id:'reportes',i:'📊',l:'Reportes'},{id:'copiloto',i:'✦',l:'Copiloto IA'},{id:'alertas',i:'🔔',l:'Alertas WhatsApp'}] },
@@ -1786,6 +1786,154 @@ function ReportesView({empresa}:{empresa:Company|null}) {
 }
 
 // ══════════════════════════════════════════════════════════
+//  PANEL ADMIN DE CLIENTES (solo Administrador)
+// ══════════════════════════════════════════════════════════
+function PanelClientesView({user,onNav}:{user:User|null;onNav:(id:string)=>void}) {
+  const [period,setPeriod]=useState(PERIOD_OPTIONS[1]);
+  const [data,setData]=useState<{empresas:Record<string,unknown>[];metricas:Record<string,unknown>}|null>(null);
+  const [loading,setLoading]=useState(false);
+  const [search,setSearch]=useState('');
+  const [filterStatus,setFilterStatus]=useState('todos');
+  const [updating,setUpdating]=useState<string|null>(null);
+
+  const MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const periodoLabel=(p:string)=>{const[y,m]=p.split('-');return `${MESES[parseInt(m)-1]} ${y}`;};
+  const fmtS=(n:number)=>'S/ '+new Intl.NumberFormat('es-PE',{minimumFractionDigits:2}).format(n);
+  const fmtFecha=(d:string|null)=>{if(!d)return '—';const[y,m,day]=d.split('-');return `${day}/${m}/${y}`;};
+
+  const load=()=>{
+    setLoading(true);
+    fetch(`/api/admin/clientes?period=${period}`,{headers:H()})
+      .then(r=>r.json()).then(d=>{if(d.ok)setData(d.data);setLoading(false);});
+  };
+
+  useEffect(()=>{load();},[period]);
+
+  const toggleStatus=async(id:string,currentStatus:string)=>{
+    const newStatus=currentStatus==='activo'?'inactivo':'activo';
+    setUpdating(id);
+    await fetch('/api/admin/clientes',{method:'PATCH',headers:H(),body:JSON.stringify({id,status:newStatus})});
+    setUpdating(null);
+    load();
+  };
+
+  const changePlan=async(id:string,plan:string)=>{
+    await fetch('/api/admin/clientes',{method:'PATCH',headers:H(),body:JSON.stringify({id,plan})});
+    load();
+  };
+
+  if(user?.role!=='Administrador') return <EmptyState icon="🔒" title="Acceso restringido" sub="Solo Administradores."/>;
+
+  const empresas=(data?.empresas||[]) as Record<string,unknown>[];
+  const metricas=(data?.metricas||{}) as Record<string,unknown>;
+
+  const filtradas=empresas.filter(e=>{
+    const matchSearch=!search||String(e.nombre).toLowerCase().includes(search.toLowerCase())||String(e.ruc).includes(search);
+    const matchStatus=filterStatus==='todos'||e.status===filterStatus;
+    return matchSearch&&matchStatus;
+  });
+
+  const STATUS_COLORS:{[k:string]:{bg:string;color:string;label:string}}={
+    activo:  {bg:C.greenM,color:C.green,label:'🟢 Activo'},
+    inactivo:{bg:C.redM,  color:C.red,  label:'🔴 Inactivo'},
+    prueba:  {bg:C.amberM,color:C.amber,label:'🟡 Prueba'},
+  };
+
+  return <div style={{animation:'fadeIn .2s ease'}}>
+    <div style={{marginBottom:'1.5rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <div>
+        <div style={{fontSize:22,fontWeight:800,color:C.t1}}>👥 Panel de Clientes</div>
+        <div style={{fontSize:13,color:C.t3,marginTop:4}}>{Number(metricas.total)||0} empresas registradas · {periodoLabel(period)}</div>
+      </div>
+      <select value={period} onChange={e=>setPeriod(e.target.value)}
+        style={{padding:'.45rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:'Inter,system-ui,sans-serif'}}>
+        {PERIOD_OPTIONS.map(p=><option key={p} value={p}>{periodoLabel(p)}</option>)}
+      </select>
+    </div>
+
+    {/* Métricas */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:'1.5rem'}}>
+      <StatCard label="Clientes activos"    value={metricas.activos as number||0}           color={C.green}  icon="🟢"/>
+      <StatCard label="En prueba"           value={metricas.prueba as number||0}            color={C.amber}  icon="🟡"/>
+      <StatCard label="Ingresos estimados"  value={fmtS(metricas.ingresosEstimados as number||0)} color={C.blue} icon="💰"/>
+      <StatCard label="Descargaron SIRE"    value={`${metricas.conDescarga||0} este mes`}   color={C.teal}   icon="📥"/>
+    </div>
+
+    {/* Filtros */}
+    <div style={{display:'flex',gap:10,marginBottom:'1.25rem',flexWrap:'wrap'}}>
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por nombre o RUC..."
+        style={{flex:1,minWidth:200,padding:'.45rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:'Inter,system-ui,sans-serif',outline:'none'}}/>
+      <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
+        style={{padding:'.45rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:'Inter,system-ui,sans-serif'}}>
+        <option value="todos">Todos los estados</option>
+        <option value="activo">🟢 Activos</option>
+        <option value="inactivo">🔴 Inactivos</option>
+        <option value="prueba">🟡 En prueba</option>
+      </select>
+    </div>
+
+    {/* Tabla */}
+    {loading?<div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><Spinner size={32}/></div>:(
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+        {filtradas.length===0?<EmptyState icon="👥" title="Sin empresas" sub="No hay empresas que coincidan con los filtros."/>:(
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:800}}>
+              <thead>
+                <tr>
+                  <Th>Empresa</Th>
+                  <Th center>Plan</Th>
+                  <Th center>Estado</Th>
+                  <Th center>Usuarios</Th>
+                  <Th center>Última descarga</Th>
+                  <Th center>Docs este mes</Th>
+                  <Th center>Acciones</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtradas.map((e,i)=>{
+                  const sc=STATUS_COLORS[e.status as string]||STATUS_COLORS.activo;
+                  return <tr key={e.id as string} style={{background:i%2===0?C.card:C.bg}}>
+                    <Td>
+                      <div style={{fontWeight:700,color:C.t1,fontSize:13}}>{String(e.nombre).substring(0,30)}</div>
+                      <div style={{fontSize:11,color:C.t4,fontFamily:'JetBrains Mono,monospace'}}>RUC: {String(e.ruc)}</div>
+                    </Td>
+                    <Td center>
+                      <select value={String(e.plan||'Básico')} onChange={ev=>changePlan(e.id as string,ev.target.value)}
+                        style={{padding:'3px 8px',border:`1px solid ${C.border}`,borderRadius:5,fontSize:11,fontFamily:'Inter,system-ui,sans-serif',background:C.bg,cursor:'pointer'}}>
+                        <option>Básico</option>
+                        <option>Profesional</option>
+                        <option>Empresa</option>
+                      </select>
+                    </Td>
+                    <Td center>
+                      <span style={{background:sc.bg,color:sc.color,fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:20}}>{sc.label}</span>
+                    </Td>
+                    <Td center><span style={{fontWeight:700,color:C.t1}}>{e.usuarios as number}</span></Td>
+                    <Td center small muted>{fmtFecha(e.ultimaDescarga as string|null)}</Td>
+                    <Td center>
+                      <span style={{fontWeight:700,color:(e.docsEsteMes as number)>0?C.blue:C.t4}}>{e.docsEsteMes as number}</span>
+                    </Td>
+                    <Td center>
+                      <div style={{display:'flex',gap:6,justifyContent:'center'}}>
+                        <Btn size="sm" color="ghost" onClick={()=>{/* navegar a empresa */}}>Ver</Btn>
+                        <Btn size="sm" color={e.status==='activo'?'red':'green'} disabled={updating===e.id as string}
+                          onClick={()=>toggleStatus(e.id as string,e.status as string)}>
+                          {updating===e.id as string?<Spinner size={11} color="#fff"/>:e.status==='activo'?'Desactivar':'Activar'}
+                        </Btn>
+                      </div>
+                    </Td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    )}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════
 //  MULTI-EMPRESA DASHBOARD (solo Administrador)
 // ══════════════════════════════════════════════════════════
 function MultiEmpresaView({user}:{user:User|null}) {
@@ -2699,6 +2847,7 @@ export default function Dashboard() {
     copiloto:     <CopilotoView docs={docs} movs={movs} detrs={detrs}/>,
     alertas:      <AlertasView empresa={empresa} user={user} addToast={addToast}/>,
     multiempresa: <MultiEmpresaView user={user}/>,
+    panel_clientes: <PanelClientesView user={user} onNav={setActive}/>,
     concar:       <ConcarView docs={docs} empresa={empresa} addToast={addToast} period={period}/>,
     ple:          <PleView empresa={empresa} period={period} docs={docs} addToast={addToast}/>,
     empresas:     <EmpresasView empresas={empresas} onRefresh={refreshEmpresas} addToast={addToast}/>,
