@@ -1,12 +1,11 @@
 import { NextRequest } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { ok, err, unauthorized, getIP } from '@/lib/response';
-import { queryAll, execute, findCompanyById } from '@/lib/db';
+import { queryAll, findCompanyById, createAuditLog } from '@/lib/db';
 import { runAlertas } from '@/lib/alerts';
-import { sendWhatsApp, normalizePhone } from '@/lib/whatsapp';
-import { createAuditLog } from '@/lib/db';
+import { sendEmail, emailTemplate } from '@/lib/email';
 
-// GET /api/alerts?companyId=xxx  — estado de alertas + config de teléfonos
+// GET /api/alerts?companyId=xxx
 export async function GET(req: NextRequest) {
   const user = await getUser(req);
   if (!user) return unauthorized();
@@ -15,20 +14,14 @@ export async function GET(req: NextRequest) {
   const companyId = searchParams.get('companyId');
 
   try {
-    // Últimas alertas enviadas
     const logs = companyId
-      ? await queryAll(
-          `SELECT * FROM alert_logs WHERE "companyId"=$1 ORDER BY "createdAt" DESC LIMIT 50`,
-          [companyId]
-        )
+      ? await queryAll(`SELECT * FROM alert_logs WHERE "companyId"=$1 ORDER BY "createdAt" DESC LIMIT 50`, [companyId])
       : await queryAll(`SELECT * FROM alert_logs ORDER BY "createdAt" DESC LIMIT 100`);
 
-    // Usuarios con teléfono configurado
-    const usersWithPhone = await queryAll(
-      `SELECT id, name, email, role, phone FROM users WHERE phone IS NOT NULL AND phone != '' AND status='activo'`
+    const usersWithEmail = await queryAll(
+      `SELECT id, name, email, role FROM users WHERE email IS NOT NULL AND status='activo'`
     );
 
-    // Resumen de alertas pendientes
     let pendientes = null;
     if (companyId) {
       const [dets, cxps, cxcs, obs] = await Promise.all([
@@ -45,36 +38,42 @@ export async function GET(req: NextRequest) {
       };
     }
 
-    return ok({ logs, usersWithPhone, pendientes, twilioConfigured: !!process.env.TWILIO_ACCOUNT_SID });
+    return ok({
+      logs,
+      usersWithEmail,
+      pendientes,
+      resendConfigured: !!process.env.RESEND_API_KEY,
+    });
   } catch (e) {
     return err((e as Error).message, 500);
   }
 }
 
-// POST /api/alerts — acciones
+// POST /api/alerts
 export async function POST(req: NextRequest) {
   const user = await getUser(req);
   if (!user) return unauthorized();
 
   try {
     const body = await req.json();
-    const { action, companyId, userId, phone } = body;
+    const { action, companyId, email } = body;
 
-    // ── Guardar teléfono de usuario ──────────────────────
-    if (action === 'save-phone') {
-      if (!userId || !phone) return err('userId y phone requeridos');
-      const normalized = normalizePhone(phone);
-      await execute(`UPDATE users SET phone=$1,"updatedAt"=NOW() WHERE id=$2`, [normalized, userId]);
-      return ok({ saved: true, phone: normalized });
-    }
-
-    // ── Test: enviar mensaje de prueba ───────────────────
+    // ── Test: enviar email de prueba ─────────────────────
     if (action === 'test') {
-      if (!phone) return err('phone requerido');
-      const r = await sendWhatsApp({
-        to: phone,
-        body: `✅ *Sherman Finance*\n\nPrueba de conexión exitosa.\nTus alertas de WhatsApp están configuradas correctamente.\n\n_${new Date().toLocaleString('es-PE')}_`,
-      });
+      if (!email) return err('email requerido');
+      const html = emailTemplate(
+        '✅ Prueba de conexión exitosa',
+        `<p style="font-size:14px;color:#374151;">Las alertas por email están configuradas correctamente en <strong>Sherman Finance</strong>.</p>
+         <p style="font-size:13px;color:#6B7280;margin-top:12px;">Recibirás notificaciones automáticas sobre:</p>
+         <ul style="font-size:13px;color:#374151;line-height:2;">
+           <li>◑ Detracciones próximas a vencer</li>
+           <li>← Facturas de proveedores vencidas</li>
+           <li>→ Facturas de venta sin cobrar</li>
+           <li>⚠️ Comprobantes observados en SUNAT</li>
+         </ul>
+         <p style="font-size:12px;color:#9CA3AF;margin-top:16px;">${new Date().toLocaleString('es-PE')}</p>`
+      );
+      const r = await sendEmail({ to: email, subject: '✅ Sherman Finance — Prueba de alertas', html });
       return ok(r);
     }
 
@@ -84,19 +83,19 @@ export async function POST(req: NextRequest) {
       const company = await findCompanyById(companyId);
       if (!company) return err('Empresa no encontrada');
 
-      const result = await runAlertas(companyId, company.nombre as string || company.ruc as string);
+      const result = await runAlertas(companyId, (company.nombre || company.ruc) as string);
 
       await createAuditLog({
         userId: user.sub, userEmail: user.email, userRole: user.role,
-        action: 'ALERTAS_WHATSAPP_MANUAL',
-        object: `${companyId} — ${result.total} mensajes enviados`,
+        action: 'ALERTAS_EMAIL_MANUAL',
+        object: `${companyId} — ${result.total} emails enviados`,
         ip: getIP(req),
       });
 
       return ok({ ...result, message: `${result.total} alertas enviadas` });
     }
 
-    return err('action inválido. Usa: save-phone | test | run');
+    return err('action inválido. Usa: test | run');
   } catch (e) {
     return err((e as Error).message, 500);
   }

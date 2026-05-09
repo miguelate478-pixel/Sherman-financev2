@@ -1752,14 +1752,13 @@ function ReportesView({empresa}:{empresa:Company|null}) {
 }
 
 // ══════════════════════════════════════════════════════════
-//  ALERTAS WHATSAPP
+//  ALERTAS EMAIL
 // ══════════════════════════════════════════════════════════
 function AlertasView({empresa,user,addToast}:{empresa:Company|null;user:User|null;addToast:(m:string,t?:ToastType)=>void}) {
-  const [phone,setPhone]=useState('');
-  const [saving,setSaving]=useState(false);
+  const [testEmail,setTestEmail]=useState('');
   const [testing,setTesting]=useState(false);
   const [running,setRunning]=useState(false);
-  const [status,setStatus]=useState<{pendientes?:Record<string,number>;twilioConfigured?:boolean;logs?:Record<string,unknown>[]}>({});
+  const [status,setStatus]=useState<{pendientes?:Record<string,number>;resendConfigured?:boolean;logs?:Record<string,unknown>[];usersWithEmail?:Record<string,unknown>[]}>({});
   const [loaded,setLoaded]=useState(false);
 
   useEffect(()=>{
@@ -1768,35 +1767,27 @@ function AlertasView({empresa,user,addToast}:{empresa:Company|null;user:User|nul
       .then(r=>r.json()).then(d=>{if(d.ok){setStatus(d.data);setLoaded(true);}});
   },[empresa?.id]);
 
-  const savePhone=async()=>{
-    if(!user?.id||!phone){addToast('Ingresa un número','error');return;}
-    setSaving(true);
-    const r=await fetch('/api/alerts',{method:'POST',headers:H(),body:JSON.stringify({action:'save-phone',userId:user.id,phone})});
-    const d=await r.json();
-    setSaving(false);
-    if(d.ok){addToast(`Teléfono guardado: ${d.data.phone}`,'success');}
-    else addToast(d.error||'Error','error');
-  };
+  // Pre-llenar con email del usuario actual
+  useEffect(()=>{ if(user?.email) setTestEmail(user.email); },[user?.email]);
 
-  const testWA=async()=>{
-    if(!phone){addToast('Ingresa un número primero','error');return;}
+  const testEmail_fn=async()=>{
+    if(!testEmail){addToast('Ingresa un email','error');return;}
     setTesting(true);
-    const r=await fetch('/api/alerts',{method:'POST',headers:H(),body:JSON.stringify({action:'test',phone})});
+    const r=await fetch('/api/alerts',{method:'POST',headers:H(),body:JSON.stringify({action:'test',email:testEmail})});
     const d=await r.json();
     setTesting(false);
-    if(d.ok){addToast('✅ Mensaje de prueba enviado','success');}
+    if(d.ok){addToast('✅ Email de prueba enviado — revisa tu bandeja','success');}
     else addToast(d.error||'Error al enviar','error');
   };
 
-  const runAlertas=async()=>{
+  const runAlertas_fn=async()=>{
     if(!empresa?.id){addToast('Selecciona empresa','error');return;}
     setRunning(true);
     const r=await fetch('/api/alerts',{method:'POST',headers:H(),body:JSON.stringify({action:'run',companyId:empresa.id})});
     const d=await r.json();
     setRunning(false);
     if(d.ok){
-      addToast(`${d.data.total} alertas enviadas`,'success');
-      // Recargar estado
+      addToast(`${d.data.total} alertas enviadas por email`,'success');
       fetch(`/api/alerts?companyId=${empresa.id}`,{headers:H()}).then(r=>r.json()).then(d=>{if(d.ok) setStatus(d.data);});
     } else addToast(d.error||'Error','error');
   };
@@ -1810,41 +1801,39 @@ function AlertasView({empresa,user,addToast}:{empresa:Company|null;user:User|nul
 
   return <div style={{animation:'fadeIn .2s ease',maxWidth:800}}>
     <div style={{marginBottom:'1.5rem'}}>
-      <div style={{fontSize:22,fontWeight:800,color:C.t1}}>🔔 Alertas WhatsApp</div>
-      <div style={{fontSize:13,color:C.t3,marginTop:4}}>Notificaciones automáticas vía Twilio · Se ejecutan con el cron diario</div>
+      <div style={{fontSize:22,fontWeight:800,color:C.t1}}>🔔 Alertas por Email</div>
+      <div style={{fontSize:13,color:C.t3,marginTop:4}}>Notificaciones automáticas · Resend (gratis 3,000/mes) · Se ejecutan con el cron diario</div>
     </div>
 
-    {/* Estado Twilio */}
-    <div style={{background:status.twilioConfigured?C.greenL:C.amberL,border:`1px solid ${status.twilioConfigured?C.greenM:C.amberM}`,borderRadius:10,padding:'1rem 1.25rem',marginBottom:'1.5rem',display:'flex',gap:12,alignItems:'center'}}>
-      <span style={{fontSize:24}}>{status.twilioConfigured?'✅':'⚠️'}</span>
+    {/* Estado Resend */}
+    <div style={{background:status.resendConfigured?C.greenL:C.amberL,border:`1px solid ${status.resendConfigured?C.greenM:C.amberM}`,borderRadius:10,padding:'1rem 1.25rem',marginBottom:'1.5rem',display:'flex',gap:12,alignItems:'center'}}>
+      <span style={{fontSize:24}}>{status.resendConfigured?'✅':'⚠️'}</span>
       <div>
-        <div style={{fontWeight:700,color:status.twilioConfigured?C.green:C.amber}}>
-          {status.twilioConfigured?'Twilio configurado — WhatsApp activo':'Twilio no configurado'}
+        <div style={{fontWeight:700,color:status.resendConfigured?C.green:C.amber}}>
+          {status.resendConfigured?'Resend configurado — Emails activos':'Resend no configurado'}
         </div>
         <div style={{fontSize:12,color:C.t3,marginTop:2}}>
-          {status.twilioConfigured
-            ?'Las alertas se enviarán automáticamente cada día con el cron.'
-            :'Agrega TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN y TWILIO_WHATSAPP_FROM en las variables de entorno de Railway.'}
+          {status.resendConfigured
+            ?`Las alertas se envían a ${status.usersWithEmail?.length||0} usuario${(status.usersWithEmail?.length||0)!==1?'s':''} activo${(status.usersWithEmail?.length||0)!==1?'s':''}.`
+            :'Agrega RESEND_API_KEY en las variables de entorno de Railway. Gratis en resend.com'}
         </div>
       </div>
     </div>
 
-    {/* Configurar teléfono */}
+    {/* Test de email */}
     <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1.5rem'}}>
-      <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>📱 Tu número de WhatsApp</div>
+      <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>📧 Probar envío de email</div>
       <div style={{display:'flex',gap:8,alignItems:'flex-end'}}>
         <div style={{flex:1}}>
-          <div style={{fontSize:11,color:C.t4,marginBottom:4}}>Número (con código de país)</div>
-          <input
-            value={phone} onChange={e=>setPhone(e.target.value)}
-            placeholder="+51987654321"
-            style={{width:'100%',padding:'.5rem .75rem',border:`1px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:'JetBrains Mono,monospace'}}
-          />
-          <div style={{fontSize:10,color:C.t4,marginTop:3}}>Formato: +51 seguido de 9 dígitos</div>
+          <div style={{fontSize:11,color:C.t4,marginBottom:4}}>Email de destino</div>
+          <input value={testEmail} onChange={e=>setTestEmail(e.target.value)} placeholder="contador@empresa.com"
+            style={{width:'100%',padding:'.5rem .75rem',border:`1px solid ${C.border}`,borderRadius:7,fontSize:13}}/>
         </div>
-        <Btn color="blue" disabled={saving} onClick={savePhone}>{saving?<Spinner size={13} color="#fff"/>:'💾 Guardar'}</Btn>
-        <Btn color="teal" disabled={testing||!phone} onClick={testWA}>{testing?<Spinner size={13} color="#fff"/>:'📲 Probar'}</Btn>
+        <Btn color="teal" disabled={testing||!testEmail} onClick={testEmail_fn}>
+          {testing?<><Spinner size={13} color="#fff"/>Enviando...</>:'📧 Enviar prueba'}
+        </Btn>
       </div>
+      <div style={{fontSize:11,color:C.t4,marginTop:6}}>Los emails se envían a todos los usuarios activos de la empresa automáticamente.</div>
     </div>
 
     {/* Alertas activas */}
@@ -1853,36 +1842,53 @@ function AlertasView({empresa,user,addToast}:{empresa:Company|null;user:User|nul
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
         {ALERTAS_INFO.map(a=>(
           <div key={a.label} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:'1rem',display:'flex',gap:12,alignItems:'center'}}>
-            <div style={{fontSize:24,width:36,textAlign:'center',flexShrink:0}}>{a.icon}</div>
-            <div style={{flex:1}}>
+            <div style={{fontSize:22,width:32,textAlign:'center',flexShrink:0}}>{a.icon}</div>
+            <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:12,fontWeight:700,color:C.t1}}>{a.label}</div>
               <div style={{fontSize:11,color:C.t3,marginTop:2}}>{a.desc}</div>
             </div>
-            {loaded&&<div style={{fontSize:20,fontWeight:800,color:a.count&&a.count>0?a.color:C.t5,flexShrink:0}}>{a.count??'—'}</div>}
+            {loaded&&<div style={{fontSize:22,fontWeight:800,color:a.count&&a.count>0?a.color:C.t5,flexShrink:0,minWidth:28,textAlign:'right'}}>{a.count??'—'}</div>}
           </div>
         ))}
       </div>
     </div>
 
-    {/* Ejecutar manualmente */}
-    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1.5rem'}}>
-      <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'.5rem'}}>⚡ Ejecutar alertas ahora</div>
-      <div style={{fontSize:12,color:C.t3,marginBottom:'1rem'}}>Envía todas las alertas pendientes inmediatamente sin esperar el cron.</div>
-      <Btn color="blue" disabled={running||!empresa?.id} onClick={runAlertas}>
-        {running?<><Spinner size={13} color="#fff"/>Enviando...</>:'🔔 Enviar alertas ahora'}
+    {/* Ejecutar ahora */}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1.5rem',display:'flex',gap:16,alignItems:'center'}}>
+      <div style={{flex:1}}>
+        <div style={{fontSize:14,fontWeight:700,color:C.t1}}>⚡ Enviar alertas ahora</div>
+        <div style={{fontSize:12,color:C.t3,marginTop:4}}>Envía todas las alertas pendientes sin esperar el cron diario.</div>
+      </div>
+      <Btn color="blue" disabled={running||!empresa?.id} onClick={runAlertas_fn}>
+        {running?<><Spinner size={13} color="#fff"/>Enviando...</>:'🔔 Enviar ahora'}
       </Btn>
     </div>
+
+    {/* Usuarios que reciben alertas */}
+    {status.usersWithEmail&&status.usersWithEmail.length>0&&(
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1.5rem'}}>
+        <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>👥 Destinatarios</div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+          {status.usersWithEmail.map((u,i)=>(
+            <div key={i} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:'6px 12px',fontSize:12}}>
+              <span style={{fontWeight:600,color:C.t1}}>{String(u.name)}</span>
+              <span style={{color:C.t4,marginLeft:6}}>{String(u.email)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
 
     {/* Historial */}
     {status.logs&&status.logs.length>0&&(
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
-        <div style={{padding:'1rem 1.25rem',borderBottom:`1px solid ${C.border}`,fontSize:14,fontWeight:700}}>📜 Historial reciente</div>
+        <div style={{padding:'1rem 1.25rem',borderBottom:`1px solid ${C.border}`,fontSize:14,fontWeight:700}}>📜 Historial de alertas enviadas</div>
         <table style={{width:'100%',borderCollapse:'collapse'}}>
           <thead><tr><Th>Tipo</Th><Th>Referencia</Th><Th>Fecha</Th></tr></thead>
           <tbody>
-            {status.logs.slice(0,10).map((l,i)=>(
+            {status.logs.slice(0,15).map((l,i)=>(
               <tr key={i} style={{background:i%2===0?C.card:C.bg}}>
-                <Td><Badge label={String(l.tipo)} color="blue" sm/></Td>
+                <Td><Badge label={String(l.tipo).replace(/_/g,' ')} color="blue" sm/></Td>
                 <Td mono small>{String(l.ref)}</Td>
                 <Td small muted>{String(l.fecha)}</Td>
               </tr>
@@ -1892,21 +1898,23 @@ function AlertasView({empresa,user,addToast}:{empresa:Company|null;user:User|nul
       </div>
     )}
 
-    {/* Instrucciones Railway */}
-    {!status.twilioConfigured&&(
+    {/* Setup instructions */}
+    {!status.resendConfigured&&(
       <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginTop:'1.5rem'}}>
-        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>🚀 Cómo configurar en Railway</div>
-        <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,background:'#0D1117',color:'#93C5FD',borderRadius:8,padding:'1rem',lineHeight:2}}>
-          <div style={{color:'#6B7280'}}># Variables de entorno en Railway → Settings → Variables</div>
-          <div>TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div>
-          <div>TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div>
-          <div>TWILIO_WHATSAPP_FROM=whatsapp:+14155238886</div>
+        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>🚀 Configurar en Railway (5 minutos)</div>
+        <div style={{fontSize:13,color:C.t2,lineHeight:2,marginBottom:'1rem'}}>
+          1. Ve a <strong>resend.com</strong> → crea cuenta gratis<br/>
+          2. Crea un API Key en el dashboard<br/>
+          3. Agrega en Railway → Settings → Variables:
         </div>
-        <div style={{fontSize:11,color:C.t3,marginTop:'1rem',lineHeight:1.8}}>
-          1. Crea cuenta en <strong>twilio.com</strong> (gratis para pruebas)<br/>
-          2. Activa el Sandbox de WhatsApp en Twilio Console<br/>
-          3. Agrega las 3 variables en Railway<br/>
-          4. Redeploy automático
+        <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,background:'#0D1117',color:'#93C5FD',borderRadius:8,padding:'1rem',lineHeight:2}}>
+          <div style={{color:'#6B7280'}}># Railway → Settings → Variables</div>
+          <div>RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxx</div>
+          <div>EMAIL_FROM=alertas@tudominio.com</div>
+          <div>EMAIL_FROM_NAME=Sherman Finance</div>
+        </div>
+        <div style={{fontSize:11,color:C.t3,marginTop:'1rem'}}>
+          ✅ Plan gratis: 3,000 emails/mes · Sin tarjeta de crédito
         </div>
       </div>
     )}

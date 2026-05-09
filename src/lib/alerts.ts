@@ -1,19 +1,10 @@
 // ══════════════════════════════════════════════════════════
 //  Motor de Alertas — Sherman Finance v2
-//  Detecta situaciones críticas y envía WhatsApp
+//  Envía emails automáticos via Resend (gratis)
 // ══════════════════════════════════════════════════════════
 
 import { queryAll, execute } from './db';
-import { sendWhatsApp, sendWhatsAppBulk } from './whatsapp';
-
-const fmt = (n: number) =>
-  new Intl.NumberFormat('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
-
-function addDays(dateStr: string, days: number): Date {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + days);
-  return d;
-}
+import { sendEmailBulk, emailTemplate, fmtMoney, alertRow } from './email';
 
 function diffDays(target: string): number {
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -21,24 +12,18 @@ function diffDays(target: string): number {
   return Math.round((t.getTime() - today.getTime()) / 86400000);
 }
 
-function fmtDate(d: string): string {
-  const [y, m, day] = d.split('-');
-  const MESES = ['', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-  return `${parseInt(day)} ${MESES[parseInt(m)]} ${y}`;
-}
-
-// ── Obtener usuarios con teléfono de una empresa ──────────
-async function getPhoneUsers(companyId: string): Promise<{ name: string; phone: string }[]> {
+// ── Obtener emails de usuarios activos de una empresa ─────
+async function getEmailUsers(companyId: string): Promise<{ name: string; email: string }[]> {
   const rows = await queryAll(
-    `SELECT name, phone FROM users
-     WHERE status='activo' AND phone IS NOT NULL AND phone != ''
+    `SELECT name, email FROM users
+     WHERE status='activo' AND email IS NOT NULL AND email != ''
      AND ("companyIds" LIKE $1 OR role='Administrador')`,
     [`%${companyId}%`]
-  ) as { name: string; phone: string }[];
-  return rows.filter(r => r.phone);
+  ) as { name: string; email: string }[];
+  return rows;
 }
 
-// ── Guardar log de alerta enviada (evita duplicados) ──────
+// ── Anti-duplicado: una alerta por tipo por día ───────────
 async function alertaYaEnviada(companyId: string, tipo: string, ref: string): Promise<boolean> {
   const hoy = new Date().toISOString().split('T')[0];
   const rows = await queryAll(
@@ -58,9 +43,8 @@ async function registrarAlerta(companyId: string, tipo: string, ref: string): Pr
 }
 
 // ══════════════════════════════════════════════════════════
-//  ALERTA 1: Detracciones próximas a vencer
-//  Regla: vence el día 12 del mes siguiente
-//  Avisar: 5 días antes y el mismo día
+//  ALERTA 1: Detracciones próximas a vencer (día 12)
+//  Avisa 5 días antes
 // ══════════════════════════════════════════════════════════
 export async function alertarDetracciones(companyId: string, companyName: string): Promise<number> {
   const pendientes = await queryAll(
@@ -68,16 +52,8 @@ export async function alertarDetracciones(companyId: string, companyName: string
     [companyId]
   ) as Record<string, unknown>[];
 
-  const users = await getPhoneUsers(companyId);
-  if (!users.length) return 0;
-
-  let enviadas = 0;
-
-  // Agrupar por fecha de vencimiento
   const porVencer = pendientes.filter(d => {
-    // La detracción vence el día 12 del mes siguiente a la emisión
-    const issueDate = d.createdAt as string || new Date().toISOString();
-    const venc = new Date(issueDate);
+    const venc = new Date(d.createdAt as string || new Date().toISOString());
     venc.setMonth(venc.getMonth() + 1);
     venc.setDate(12);
     const dias = diffDays(venc.toISOString().split('T')[0]);
@@ -86,37 +62,46 @@ export async function alertarDetracciones(companyId: string, companyName: string
 
   if (porVencer.length === 0) return 0;
 
-  // Calcular total
-  const totalMonto = porVencer.reduce((s, d) => s + (d.amount as number), 0);
-  const ref = `det-${new Date().toISOString().split('T')[0]}-${porVencer.length}`;
+  const users = await getEmailUsers(companyId);
+  if (!users.length) return 0;
 
+  const ref = `det-${new Date().toISOString().split('T')[0]}`;
   if (await alertaYaEnviada(companyId, 'DETRACCION_VENCE', ref)) return 0;
 
+  const totalMonto = porVencer.reduce((s, d) => s + (d.amount as number), 0);
+
+  const rows = porVencer.slice(0, 5).map(d =>
+    alertRow('◑', String(d.provider).substring(0, 35), `S/ ${fmtMoney(d.amount as number)}`, '#D97706')
+  ).join('');
+
+  const body = `
+    <div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:16px;margin-bottom:20px;">
+      <div style="font-size:14px;font-weight:700;color:#D97706;">⚠️ Detracciones próximas a vencer</div>
+      <div style="font-size:13px;color:#92400E;margin-top:4px;">Vencen el día 12 del mes. Deposita en tu cuenta Banco de la Nación.</div>
+    </div>
+    <table width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+    ${porVencer.length > 5 ? `<div style="font-size:12px;color:#6B7280;margin-top:8px;">...y ${porVencer.length - 5} más</div>` : ''}
+    <div style="background:#F8FAFC;border-radius:8px;padding:16px;margin-top:20px;text-align:center;">
+      <div style="font-size:13px;color:#374151;">Total a depositar</div>
+      <div style="font-size:28px;font-weight:800;color:#D97706;">S/ ${fmtMoney(totalMonto)}</div>
+    </div>`;
+
+  const html = emailTemplate(`◑ ${porVencer.length} detracción${porVencer.length > 1 ? 'es' : ''} por vencer — ${companyName}`, body);
+
   const msgs = users.map(u => ({
-    to: u.phone,
-    body: porVencer.length === 1
-      ? `📋 *Sherman Finance*\n\nHola ${u.name}, tienes una detracción próxima a vencer:\n\n` +
-        `• Proveedor: ${porVencer[0].provider}\n` +
-        `• Monto: S/ ${fmt(porVencer[0].amount as number)}\n` +
-        `• Vence: día 12 del mes\n\n` +
-        `⚠️ Deposita en tu cuenta Banco de la Nación antes del vencimiento.\n\n_${companyName}_`
-      : `📋 *Sherman Finance*\n\nHola ${u.name}, tienes *${porVencer.length} detracciones* próximas a vencer:\n\n` +
-        `• Total a depositar: *S/ ${fmt(totalMonto)}*\n` +
-        `• Vencen: día 12 del mes\n\n` +
-        `⚠️ Deposita en tu cuenta Banco de la Nación antes del vencimiento.\n\n_${companyName}_`,
+    to: u.email,
+    subject: `⚠️ ${porVencer.length} detracción${porVencer.length > 1 ? 'es' : ''} vence${porVencer.length === 1 ? '' : 'n'} pronto — ${companyName}`,
+    html,
+    text: `Tienes ${porVencer.length} detracciones por vencer. Total: S/ ${fmtMoney(totalMonto)}. Deposita antes del día 12.`,
   }));
 
-  const r = await sendWhatsAppBulk(msgs);
-  if (r.sent > 0) {
-    await registrarAlerta(companyId, 'DETRACCION_VENCE', ref);
-    enviadas = r.sent;
-  }
-  return enviadas;
+  const r = await sendEmailBulk(msgs);
+  if (r.sent > 0) await registrarAlerta(companyId, 'DETRACCION_VENCE', ref);
+  return r.sent;
 }
 
 // ══════════════════════════════════════════════════════════
-//  ALERTA 2: CXP vencidas o por vencer
-//  Avisar: 3 días antes y cuando ya vencieron
+//  ALERTA 2: CXP vencidas o por vencer (3 días)
 // ══════════════════════════════════════════════════════════
 export async function alertarCxp(companyId: string, companyName: string): Promise<number> {
   const pendientes = await queryAll(
@@ -124,56 +109,56 @@ export async function alertarCxp(companyId: string, companyName: string): Promis
     [companyId]
   ) as Record<string, unknown>[];
 
-  const users = await getPhoneUsers(companyId);
-  if (!users.length) return 0;
-
-  let enviadas = 0;
-
-  // Vencidas hoy o en los próximos 3 días
   const criticas = pendientes.filter(d => {
     const dias = diffDays(d.dueDate as string);
-    return dias >= -1 && dias <= 3;
+    return dias >= -7 && dias <= 3;
   });
 
   if (criticas.length === 0) return 0;
 
-  const vencidas   = criticas.filter(d => diffDays(d.dueDate as string) < 0);
-  const porVencer  = criticas.filter(d => diffDays(d.dueDate as string) >= 0);
-  const totalMonto = criticas.reduce((s, d) => s + (d.amount as number), 0);
-  const ref = `cxp-${new Date().toISOString().split('T')[0]}`;
+  const users = await getEmailUsers(companyId);
+  if (!users.length) return 0;
 
+  const ref = `cxp-${new Date().toISOString().split('T')[0]}`;
   if (await alertaYaEnviada(companyId, 'CXP_VENCE', ref)) return 0;
 
-  let texto = `💳 *Sherman Finance*\n\nHola, tienes facturas de proveedores pendientes:\n\n`;
-  if (vencidas.length > 0) {
-    texto += `🔴 *${vencidas.length} VENCIDAS* — S/ ${fmt(vencidas.reduce((s, d) => s + (d.amount as number), 0))}\n`;
-  }
-  if (porVencer.length > 0) {
-    texto += `🟡 *${porVencer.length} por vencer* — S/ ${fmt(porVencer.reduce((s, d) => s + (d.amount as number), 0))}\n`;
-  }
-  texto += `\n*Total: S/ ${fmt(totalMonto)}*\n\n`;
+  const vencidas  = criticas.filter(d => diffDays(d.dueDate as string) < 0);
+  const porVencer = criticas.filter(d => diffDays(d.dueDate as string) >= 0);
+  const total     = criticas.reduce((s, d) => s + (d.amount as number), 0);
 
-  // Listar hasta 3 proveedores
-  criticas.slice(0, 3).forEach(d => {
+  const rows = criticas.slice(0, 6).map(d => {
     const dias = diffDays(d.dueDate as string);
-    const estado = dias < 0 ? `vencida hace ${Math.abs(dias)}d` : dias === 0 ? 'vence HOY' : `vence en ${dias}d`;
-    texto += `• ${(d.providerName as string).substring(0, 25)} — S/ ${fmt(d.amount as number)} (${estado})\n`;
-  });
-  if (criticas.length > 3) texto += `• ...y ${criticas.length - 3} más\n`;
-  texto += `\n_${companyName}_`;
+    const estado = dias < 0 ? `Vencida hace ${Math.abs(dias)}d` : dias === 0 ? 'Vence HOY' : `Vence en ${dias}d`;
+    const color  = dias < 0 ? '#DC2626' : dias === 0 ? '#D97706' : '#2563EB';
+    return alertRow('←', `${String(d.providerName).substring(0, 30)} · ${estado}`, `S/ ${fmtMoney(d.amount as number)}`, color);
+  }).join('');
 
-  const msgs = users.map(u => ({ to: u.phone, body: texto }));
-  const r = await sendWhatsAppBulk(msgs);
-  if (r.sent > 0) {
-    await registrarAlerta(companyId, 'CXP_VENCE', ref);
-    enviadas = r.sent;
-  }
-  return enviadas;
+  const body = `
+    ${vencidas.length > 0 ? `<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px 16px;margin-bottom:12px;font-size:13px;color:#DC2626;font-weight:700;">🔴 ${vencidas.length} factura${vencidas.length > 1 ? 's' : ''} VENCIDA${vencidas.length > 1 ? 'S' : ''} — S/ ${fmtMoney(vencidas.reduce((s, d) => s + (d.amount as number), 0))}</div>` : ''}
+    ${porVencer.length > 0 ? `<div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#D97706;font-weight:700;">🟡 ${porVencer.length} factura${porVencer.length > 1 ? 's' : ''} por vencer — S/ ${fmtMoney(porVencer.reduce((s, d) => s + (d.amount as number), 0))}</div>` : ''}
+    <table width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+    ${criticas.length > 6 ? `<div style="font-size:12px;color:#6B7280;margin-top:8px;">...y ${criticas.length - 6} más</div>` : ''}
+    <div style="background:#F8FAFC;border-radius:8px;padding:16px;margin-top:20px;text-align:center;">
+      <div style="font-size:13px;color:#374151;">Total pendiente</div>
+      <div style="font-size:28px;font-weight:800;color:#DC2626;">S/ ${fmtMoney(total)}</div>
+    </div>`;
+
+  const html = emailTemplate(`← Facturas de proveedores pendientes — ${companyName}`, body);
+
+  const msgs = users.map(u => ({
+    to: u.email,
+    subject: `💳 ${criticas.length} factura${criticas.length > 1 ? 's' : ''} de proveedor${vencidas.length > 0 ? ' VENCIDA' + (vencidas.length > 1 ? 'S' : '') : ' por vencer'} — ${companyName}`,
+    html,
+    text: `Tienes ${vencidas.length} facturas vencidas y ${porVencer.length} por vencer. Total: S/ ${fmtMoney(total)}.`,
+  }));
+
+  const r = await sendEmailBulk(msgs);
+  if (r.sent > 0) await registrarAlerta(companyId, 'CXP_VENCE', ref);
+  return r.sent;
 }
 
 // ══════════════════════════════════════════════════════════
 //  ALERTA 3: Documentos observados por SUNAT
-//  Avisar cuando hay docs con sunatStatus = OBSERVADO
 // ══════════════════════════════════════════════════════════
 export async function alertarObservados(companyId: string, companyName: string): Promise<number> {
   const observados = await queryAll(
@@ -183,31 +168,43 @@ export async function alertarObservados(companyId: string, companyName: string):
 
   if (observados.length === 0) return 0;
 
-  const users = await getPhoneUsers(companyId);
+  const users = await getEmailUsers(companyId);
   if (!users.length) return 0;
 
   const ref = `obs-${new Date().toISOString().split('T')[0]}-${observados.length}`;
   if (await alertaYaEnviada(companyId, 'DOCS_OBSERVADOS', ref)) return 0;
 
-  const totalMonto = observados.reduce((s, d) => s + Math.abs(d.total as number), 0);
-  let texto = `⚠️ *Sherman Finance*\n\n`;
-  texto += `Tienes *${observados.length} comprobante${observados.length > 1 ? 's' : ''} observado${observados.length > 1 ? 's' : ''}* en SUNAT:\n\n`;
+  const total = observados.reduce((s, d) => s + Math.abs(d.total as number), 0);
 
-  observados.slice(0, 4).forEach(d => {
-    const tipo = d.operation === 'COMPRA' ? '📥' : '📤';
-    texto += `${tipo} ${d.serie}-${d.number} — S/ ${fmt(Math.abs(d.total as number))}\n`;
-  });
-  if (observados.length > 4) texto += `• ...y ${observados.length - 4} más\n`;
-  texto += `\n*Total afectado: S/ ${fmt(totalMonto)}*\n`;
-  texto += `\nRevisa en Sherman Finance → Documentos → Filtro: Observados\n\n_${companyName}_`;
+  const rows = observados.slice(0, 6).map(d => {
+    const icon = d.operation === 'COMPRA' ? '📥' : '📤';
+    return alertRow(icon, `${d.serie}-${d.number} · ${d.issuerName || d.receiverName || ''}`.substring(0, 40), `S/ ${fmtMoney(Math.abs(d.total as number))}`, '#DC2626');
+  }).join('');
 
-  const msgs = users.map(u => ({ to: u.phone, body: texto }));
-  const r = await sendWhatsAppBulk(msgs);
-  if (r.sent > 0) {
-    await registrarAlerta(companyId, 'DOCS_OBSERVADOS', ref);
-    return r.sent;
-  }
-  return 0;
+  const body = `
+    <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:16px;margin-bottom:20px;">
+      <div style="font-size:14px;font-weight:700;color:#DC2626;">⚠️ Comprobantes observados en SUNAT</div>
+      <div style="font-size:13px;color:#991B1B;margin-top:4px;">Revisa y regulariza estos comprobantes para evitar problemas tributarios.</div>
+    </div>
+    <table width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+    ${observados.length > 6 ? `<div style="font-size:12px;color:#6B7280;margin-top:8px;">...y ${observados.length - 6} más</div>` : ''}
+    <div style="background:#F8FAFC;border-radius:8px;padding:16px;margin-top:20px;text-align:center;">
+      <div style="font-size:13px;color:#374151;">Total afectado</div>
+      <div style="font-size:28px;font-weight:800;color:#DC2626;">S/ ${fmtMoney(total)}</div>
+    </div>`;
+
+  const html = emailTemplate(`⚠️ ${observados.length} comprobante${observados.length > 1 ? 's' : ''} observado${observados.length > 1 ? 's' : ''} — ${companyName}`, body);
+
+  const msgs = users.map(u => ({
+    to: u.email,
+    subject: `⚠️ ${observados.length} comprobante${observados.length > 1 ? 's' : ''} observado${observados.length > 1 ? 's' : ''} en SUNAT — ${companyName}`,
+    html,
+    text: `Tienes ${observados.length} comprobantes observados en SUNAT. Total afectado: S/ ${fmtMoney(total)}.`,
+  }));
+
+  const r = await sendEmailBulk(msgs);
+  if (r.sent > 0) await registrarAlerta(companyId, 'DOCS_OBSERVADOS', ref);
+  return r.sent;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -221,52 +218,59 @@ export async function alertarCxc(companyId: string, companyName: string): Promis
 
   if (vencidas.length === 0) return 0;
 
-  const users = await getPhoneUsers(companyId);
+  const users = await getEmailUsers(companyId);
   if (!users.length) return 0;
 
   const ref = `cxc-${new Date().toISOString().split('T')[0]}`;
   if (await alertaYaEnviada(companyId, 'CXC_VENCIDA', ref)) return 0;
 
-  const totalMonto = vencidas.reduce((s, d) => s + (d.amount as number), 0);
-  let texto = `💰 *Sherman Finance*\n\n`;
-  texto += `Tienes *${vencidas.length} factura${vencidas.length > 1 ? 's' : ''} de venta vencida${vencidas.length > 1 ? 's' : ''}* sin cobrar:\n\n`;
+  const total = vencidas.reduce((s, d) => s + (d.amount as number), 0);
 
-  vencidas.slice(0, 3).forEach(d => {
+  const rows = vencidas.slice(0, 6).map(d => {
     const dias = Math.abs(diffDays(d.dueDate as string));
-    texto += `• ${(d.clientName as string).substring(0, 25)} — S/ ${fmt(d.amount as number)} (hace ${dias}d)\n`;
-  });
-  if (vencidas.length > 3) texto += `• ...y ${vencidas.length - 3} más\n`;
-  texto += `\n*Total por cobrar: S/ ${fmt(totalMonto)}*\n\n_${companyName}_`;
+    return alertRow('→', `${String(d.clientName).substring(0, 30)} · hace ${dias}d`, `S/ ${fmtMoney(d.amount as number)}`, '#7C3AED');
+  }).join('');
 
-  const msgs = users.map(u => ({ to: u.phone, body: texto }));
-  const r = await sendWhatsAppBulk(msgs);
-  if (r.sent > 0) {
-    await registrarAlerta(companyId, 'CXC_VENCIDA', ref);
-    return r.sent;
-  }
-  return 0;
+  const body = `
+    <div style="background:#F5F3FF;border:1px solid #DDD6FE;border-radius:8px;padding:16px;margin-bottom:20px;">
+      <div style="font-size:14px;font-weight:700;color:#7C3AED;">💰 Facturas de venta sin cobrar</div>
+      <div style="font-size:13px;color:#5B21B6;margin-top:4px;">Estas facturas ya vencieron. Gestiona el cobro con tus clientes.</div>
+    </div>
+    <table width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+    ${vencidas.length > 6 ? `<div style="font-size:12px;color:#6B7280;margin-top:8px;">...y ${vencidas.length - 6} más</div>` : ''}
+    <div style="background:#F8FAFC;border-radius:8px;padding:16px;margin-top:20px;text-align:center;">
+      <div style="font-size:13px;color:#374151;">Total por cobrar</div>
+      <div style="font-size:28px;font-weight:800;color:#7C3AED;">S/ ${fmtMoney(total)}</div>
+    </div>`;
+
+  const html = emailTemplate(`→ ${vencidas.length} factura${vencidas.length > 1 ? 's' : ''} vencida${vencidas.length > 1 ? 's' : ''} sin cobrar — ${companyName}`, body);
+
+  const msgs = users.map(u => ({
+    to: u.email,
+    subject: `💰 ${vencidas.length} factura${vencidas.length > 1 ? 's' : ''} de venta vencida${vencidas.length > 1 ? 's' : ''} sin cobrar — ${companyName}`,
+    html,
+    text: `Tienes ${vencidas.length} facturas de venta vencidas sin cobrar. Total: S/ ${fmtMoney(total)}.`,
+  }));
+
+  const r = await sendEmailBulk(msgs);
+  if (r.sent > 0) await registrarAlerta(companyId, 'CXC_VENCIDA', ref);
+  return r.sent;
 }
 
 // ══════════════════════════════════════════════════════════
-//  RUNNER PRINCIPAL — Ejecutar todas las alertas
+//  RUNNER PRINCIPAL
 // ══════════════════════════════════════════════════════════
 export async function runAlertas(companyId: string, companyName: string): Promise<{
-  detracciones: number;
-  cxp: number;
-  cxc: number;
-  observados: number;
-  total: number;
+  detracciones: number; cxp: number; cxc: number; observados: number; total: number;
 }> {
   console.log(`[ALERTAS] Iniciando para ${companyName} (${companyId})`);
-
   const [detracciones, cxp, cxc, observados] = await Promise.all([
     alertarDetracciones(companyId, companyName).catch(e => { console.error('[ALERTAS] det:', e.message); return 0; }),
     alertarCxp(companyId, companyName).catch(e => { console.error('[ALERTAS] cxp:', e.message); return 0; }),
     alertarCxc(companyId, companyName).catch(e => { console.error('[ALERTAS] cxc:', e.message); return 0; }),
     alertarObservados(companyId, companyName).catch(e => { console.error('[ALERTAS] obs:', e.message); return 0; }),
   ]);
-
   const total = detracciones + cxp + cxc + observados;
-  console.log(`[ALERTAS] Completado — det:${detracciones} cxp:${cxp} cxc:${cxc} obs:${observados} total:${total}`);
+  console.log(`[ALERTAS] Completado — det:${detracciones} cxp:${cxp} cxc:${cxc} obs:${observados}`);
   return { detracciones, cxp, cxc, observados, total };
 }

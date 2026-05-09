@@ -1,90 +1,181 @@
-import nodemailer from 'nodemailer';
+// ══════════════════════════════════════════════════════════
+//  Email Provider — Resend (gratis: 3,000/mes)
+//  Fallback: SMTP con Nodemailer (Gmail, etc.)
+//
+//  Variables de entorno:
+//    RESEND_API_KEY   — API key de resend.com (gratis)
+//    EMAIL_FROM       — ej: alertas@shermanfinance.com
+//    EMAIL_FROM_NAME  — ej: Sherman Finance
+//
+//  Fallback SMTP (opcional):
+//    SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS
+// ══════════════════════════════════════════════════════════
 
-function getTransporter() {
-  if (process.env.SMTP_HOST) {
-    return nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    });
+export interface EmailMessage {
+  to: string | string[];
+  subject: string;
+  html: string;
+  text?: string;
+}
+
+export interface SendResult {
+  ok: boolean;
+  id?: string;
+  error?: string;
+}
+
+const FROM_NAME  = process.env.EMAIL_FROM_NAME  || 'Sherman Finance';
+const FROM_EMAIL = process.env.EMAIL_FROM        || 'noreply@shermanfinance.com';
+const FROM       = `${FROM_NAME} <${FROM_EMAIL}>`;
+
+// ── Resend API ────────────────────────────────────────────
+async function sendViaResend(msg: EmailMessage): Promise<SendResult> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return { ok: false, error: 'RESEND_API_KEY no configurado' };
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type':  'application/json',
+    },
+    body: JSON.stringify({
+      from:    FROM,
+      to:      Array.isArray(msg.to) ? msg.to : [msg.to],
+      subject: msg.subject,
+      html:    msg.html,
+      text:    msg.text,
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+
+  const data = await res.json() as { id?: string; message?: string; name?: string };
+  if (!res.ok) {
+    console.error(`[EMAIL] Resend error ${res.status}:`, data.message || data.name);
+    return { ok: false, error: data.message || `HTTP ${res.status}` };
   }
-  // Development: log to console instead of sending
-  return null;
+  console.log(`[EMAIL] ✅ Enviado via Resend — ID: ${data.id}`);
+  return { ok: true, id: data.id };
 }
 
-const FROM = `"Sherman Finance Control AI" <${process.env.SMTP_FROM || 'noreply@shermanfinance.pe'}>`;
+// ── Envío principal ───────────────────────────────────────
+export async function sendEmail(msg: EmailMessage): Promise<SendResult> {
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('[EMAIL] Sin proveedor configurado — email no enviado:', msg.subject);
+    return { ok: false, error: 'Email no configurado. Agrega RESEND_API_KEY.' };
+  }
+  try {
+    return await sendViaResend(msg);
+  } catch (e) {
+    console.error('[EMAIL] Error:', (e as Error).message);
+    return { ok: false, error: (e as Error).message };
+  }
+}
 
-export async function sendWelcomeEmail(to: string, name: string, tempPassword: string) {
-  const t = getTransporter();
-  if (!t) { console.log(`[EMAIL] Welcome to ${to}: tempPass=${tempPassword}`); return; }
-  await t.sendMail({
-    from: FROM, to,
-    subject: 'Bienvenido a Sherman Finance Control AI',
-    html: `
-      <div style="font-family:Inter,Arial,sans-serif;max-width:600px;margin:0 auto">
-        <div style="background:#0F172A;padding:2rem;border-radius:12px 12px 0 0">
-          <h1 style="color:#fff;margin:0;font-size:20px">Sherman Finance Control AI</h1>
-          <p style="color:rgba(255,255,255,.6);margin:.5rem 0 0">Sistema contable · SUNAT/SIRE · CONCAR</p>
-        </div>
-        <div style="background:#fff;padding:2rem;border:1px solid #E2E8F0;border-top:none">
-          <h2 style="color:#111827;margin:0 0 1rem">Hola ${name} 👋</h2>
-          <p style="color:#374151">Tu cuenta ha sido creada. Estos son tus datos de acceso:</p>
-          <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:1rem;margin:1rem 0">
-            <div><strong>Email:</strong> ${to}</div>
-            <div style="margin-top:.5rem"><strong>Contraseña temporal:</strong> <code style="background:#E2E8F0;padding:2px 8px;border-radius:4px">${tempPassword}</code></div>
+// ── Envío en lote ─────────────────────────────────────────
+export async function sendEmailBulk(messages: EmailMessage[]): Promise<{ sent: number; failed: number }> {
+  let sent = 0, failed = 0;
+  for (const msg of messages) {
+    const r = await sendEmail(msg);
+    if (r.ok) sent++; else failed++;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return { sent, failed };
+}
+
+// ── Template base HTML ────────────────────────────────────
+export function emailTemplate(title: string, body: string, footer?: string): string {
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title}</title></head>
+<body style="margin:0;padding:0;background:#F8FAFC;font-family:Inter,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F8FAFC;padding:32px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+        <!-- HEADER -->
+        <tr><td style="background:#0F172A;padding:24px 32px;">
+          <div style="color:#fff;font-size:20px;font-weight:800;letter-spacing:-0.5px;">⚡ Sherman Finance</div>
+          <div style="color:#94A3B8;font-size:12px;margin-top:4px;">Sistema de Control Contable</div>
+        </td></tr>
+        <!-- BODY -->
+        <tr><td style="padding:32px;">
+          <h2 style="margin:0 0 20px;font-size:18px;color:#0F172A;">${title}</h2>
+          ${body}
+        </td></tr>
+        <!-- FOOTER -->
+        <tr><td style="background:#F8FAFC;padding:16px 32px;border-top:1px solid #E2E8F0;">
+          <div style="font-size:11px;color:#94A3B8;text-align:center;">
+            ${footer || 'Sherman Finance · Sistema de Control Contable · Este es un mensaje automático, no responder.'}
           </div>
-          <p style="color:#6B7280;font-size:13px">⚠ Cambia tu contraseña en el primer inicio de sesión.</p>
-          <a href="${process.env.APP_URL || 'http://localhost:3000'}/dashboard" style="display:inline-block;background:#2563EB;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:600;margin-top:1rem">Iniciar sesión →</a>
-        </div>
-      </div>
-    `,
-  });
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
 }
 
-export async function sendAlertEmail(to: string, alerts: { message: string; level: string }[]) {
-  const t = getTransporter();
-  if (!t) { console.log(`[EMAIL] Alerts to ${to}:`, alerts.map(a=>a.message).join(', ')); return; }
-  const errorCount = alerts.filter(a => a.level === 'error').length;
-  await t.sendMail({
-    from: FROM, to,
-    subject: `⚠ ${errorCount > 0 ? errorCount + ' alertas urgentes' : 'Notificaciones'} — Sherman Finance`,
-    html: `
-      <div style="font-family:Inter,Arial,sans-serif;max-width:600px;margin:0 auto">
-        <div style="background:#0F172A;padding:1.5rem;border-radius:12px 12px 0 0">
-          <h2 style="color:#fff;margin:0;font-size:18px">Alertas del sistema</h2>
-        </div>
-        <div style="background:#fff;padding:1.5rem;border:1px solid #E2E8F0;border-top:none">
-          ${alerts.map(a => `
-            <div style="border-left:4px solid ${a.level==='error'?'#DC2626':a.level==='warning'?'#D97706':'#2563EB'};padding:.75rem 1rem;margin-bottom:.75rem;background:${a.level==='error'?'#FEF2F2':a.level==='warning'?'#FFFBEB':'#EFF6FF'}">
-              <span style="color:${a.level==='error'?'#DC2626':a.level==='warning'?'#D97706':'#2563EB'};font-weight:600">${a.message}</span>
-            </div>
-          `).join('')}
-          <a href="${process.env.APP_URL || 'http://localhost:3000'}/dashboard" style="display:inline-block;background:#2563EB;color:#fff;padding:.6rem 1.2rem;border-radius:8px;text-decoration:none;font-weight:600;margin-top:1rem;font-size:13px">Ver en el sistema →</a>
-        </div>
-      </div>
-    `,
-  });
+// ── Helpers de formato ────────────────────────────────────
+export function fmtMoney(n: number): string {
+  return new Intl.NumberFormat('es-PE', { minimumFractionDigits: 2 }).format(n);
 }
 
-export async function sendPasswordResetEmail(to: string, resetToken: string) {
-  const t = getTransporter();
-  const url = `${process.env.APP_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
-  if (!t) { console.log(`[EMAIL] Reset password for ${to}: ${url}`); return; }
-  await t.sendMail({
-    from: FROM, to,
-    subject: 'Restablecer contraseña — Sherman Finance',
-    html: `
-      <div style="font-family:Inter,Arial,sans-serif;max-width:600px;margin:0 auto">
-        <div style="background:#0F172A;padding:1.5rem;border-radius:12px 12px 0 0">
-          <h2 style="color:#fff;margin:0">Restablecer contraseña</h2>
-        </div>
-        <div style="background:#fff;padding:1.5rem;border:1px solid #E2E8F0;border-top:none">
-          <p style="color:#374151">Hemos recibido una solicitud para restablecer tu contraseña.</p>
-          <a href="${url}" style="display:inline-block;background:#2563EB;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:600">Restablecer contraseña →</a>
-          <p style="color:#9CA3AF;font-size:12px;margin-top:1rem">Este enlace expira en 1 hora. Si no solicitaste esto, ignora este email.</p>
-        </div>
-      </div>
-    `,
-  });
+export function alertRow(icon: string, label: string, value: string, color = '#0F172A'): string {
+  return `<tr>
+    <td style="padding:8px 0;border-bottom:1px solid #F1F5F9;">
+      <span style="font-size:16px;">${icon}</span>
+      <span style="font-size:13px;color:#374151;margin-left:8px;">${label}</span>
+    </td>
+    <td style="padding:8px 0;border-bottom:1px solid #F1F5F9;text-align:right;font-weight:700;color:${color};font-size:13px;">${value}</td>
+  </tr>`;
+}
+
+// ── Email de recuperación de contraseña ──────────────────
+export async function sendPasswordResetEmail(to: string, token: string): Promise<void> {
+  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  const link = `${appUrl}/reset-password?token=${token}`;
+
+  const body = `
+    <p style="font-size:14px;color:#374151;margin-bottom:20px;">
+      Recibimos una solicitud para restablecer la contraseña de tu cuenta en Sherman Finance.
+    </p>
+    <div style="text-align:center;margin:24px 0;">
+      <a href="${link}" style="background:#2563EB;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;display:inline-block;">
+        Restablecer contraseña
+      </a>
+    </div>
+    <p style="font-size:12px;color:#9CA3AF;margin-top:20px;">
+      Este enlace expira en 1 hora. Si no solicitaste este cambio, ignora este email.
+    </p>
+    <p style="font-size:11px;color:#D1D5DB;margin-top:8px;word-break:break-all;">
+      ${link}
+    </p>`;
+
+  const html = emailTemplate('Restablecer contraseña', body);
+  await sendEmail({ to, subject: '🔐 Restablecer contraseña — Sherman Finance', html });
+}
+
+// ── Email de bienvenida a nuevo usuario ──────────────────
+export async function sendWelcomeEmail(to: string, name: string, tempPassword: string): Promise<void> {
+  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+
+  const body = `
+    <p style="font-size:14px;color:#374151;margin-bottom:20px;">
+      Hola <strong>${name}</strong>, tu cuenta en Sherman Finance ha sido creada.
+    </p>
+    <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:16px;margin-bottom:20px;">
+      <div style="font-size:12px;color:#6B7280;margin-bottom:4px;">Email</div>
+      <div style="font-size:14px;font-weight:700;color:#0F172A;font-family:monospace;">${to}</div>
+      <div style="font-size:12px;color:#6B7280;margin-top:12px;margin-bottom:4px;">Contraseña temporal</div>
+      <div style="font-size:18px;font-weight:800;color:#2563EB;font-family:monospace;">${tempPassword}</div>
+    </div>
+    <div style="text-align:center;margin:24px 0;">
+      <a href="${appUrl}" style="background:#2563EB;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;display:inline-block;">
+        Ingresar al sistema
+      </a>
+    </div>
+    <p style="font-size:12px;color:#9CA3AF;">Cambia tu contraseña después del primer ingreso.</p>`;
+
+  const html = emailTemplate('Bienvenido a Sherman Finance', body);
+  await sendEmail({ to, subject: '👋 Bienvenido a Sherman Finance — Tus credenciales', html });
 }
