@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 
 // ══════════════════════════════════════════════════════════
 //  TYPES
@@ -396,7 +396,7 @@ const NAV_GROUPS = [
   { g:'Principal', items:[{id:'dashboard',i:'◈',l:'Dashboard'},{id:'bandeja',i:'⊞',l:'Bandeja Contable'},{id:'multiempresa',i:'🏢',l:'Multi-Empresa',adminOnly:true},{id:'panel_clientes',i:'👥',l:'Panel de Clientes',adminOnly:true}] },
   { g:'SUNAT / SIRE', items:[{id:'sunat_centro',i:'⟳',l:'Centro SUNAT/SIRE'},{id:'descarga_masiva',i:'↓↓',l:'Descarga Masiva',hl:true},{id:'jobs',i:'▷',l:'Jobs y Procesos'},{id:'compras',i:'↓',l:'Compras'},{id:'ventas',i:'↑',l:'Ventas'},{id:'documentos_xml',i:'◉',l:'Docs XML/PDF/CDR'}] },
   { g:'Finanzas', items:[{id:'bancos',i:'⊟',l:'Bancos'},{id:'conciliacion',i:'⇌',l:'Conciliación'},{id:'cxc',i:'→',l:'Cuentas por Cobrar'},{id:'cxp',i:'←',l:'Cuentas por Pagar'},{id:'detracciones',i:'◑',l:'Detracciones'}] },
-  { g:'Reportes & IA', items:[{id:'reportes',i:'📊',l:'Reportes'},{id:'copiloto',i:'✦',l:'Copiloto IA'},{id:'alertas',i:'🔔',l:'Alertas WhatsApp'}] },
+  { g:'Reportes & IA', items:[{id:'reportes',i:'📊',l:'Reportes'},{id:'copiloto',i:'✦',l:'Copiloto IA'},{id:'alertas',i:'🔔',l:'Alertas Email'},{id:'calculadora',i:'🧮',l:'Calculadora IGV/Renta'},{id:'calendario',i:'📅',l:'Calendario Tributario'}] },
   { g:'Configuración', items:[{id:'ple',i:'◧',l:'PLE Libros'},{id:'concar',i:'⊙',l:'CONCAR SQL'},{id:'empresas',i:'▣',l:'Empresas / RUC'},{id:'usuarios',i:'◎',l:'Usuarios y Roles'},{id:'auditoria',i:'≡',l:'Auditoría'},{id:'configuracion',i:'⚙',l:'Configuración'}] },
 ];
 
@@ -806,7 +806,7 @@ function SunatCentroView({empresa,addToast,onNav}:{empresa:Company|null;addToast
         <div style={{marginTop:'1rem',borderTop:`1px solid ${C.border}`,paddingTop:'1rem'}}>
           <div style={{fontSize:12,fontWeight:700,color:C.t2,marginBottom:8}}>Acceso rápido</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-            {[['↓↓ Descarga Masiva','Ejecutar jobs por período','descarga_masiva'],['⊙ CONCAR SQL','Ver lotes preparados','concar']].map(([t,s,nav])=>(
+            {[['↓↓ Descarga Masiva','Ejecutar jobs por Período','descarga_masiva'],['⊙ CONCAR SQL','Ver lotes preparados','concar']].map(([t,s,nav])=>(
               <div key={nav as string} onClick={()=>onNav(nav as string)} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:'.75rem',cursor:'pointer'}}>
                 <div style={{fontSize:12,fontWeight:600,color:C.blue}}>{t as string}</div>
                 <div style={{fontSize:10,color:C.t4,marginTop:2}}>{s as string}</div>
@@ -939,7 +939,7 @@ function DashView({docs,movs,onNav,empresa,period,alerts}:{docs:Doc[];movs:BankM
           </ResponsiveContainer>
         ) : (
           <div style={{height:200,display:'flex',alignItems:'center',justifyContent:'center',color:C.t4,fontSize:13}}>
-            Sin datos para el período seleccionado
+            Sin datos para el Período seleccionado
           </div>
         )}
         <div style={{display:'flex',gap:16,justifyContent:'center',marginTop:8,fontSize:11}}>
@@ -1017,6 +1017,9 @@ function DashView({docs,movs,onNav,empresa,period,alerts}:{docs:Doc[];movs:BankM
         </div>
       ))}
     </div>
+
+    {/* COMPARATIVO AÑO ANTERIOR */}
+    <ComparativoAnterior empresa={empresa} period={period}/>
   </div>;
 }
 
@@ -1052,12 +1055,12 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
     addLog('Conectando con SUNAT/SIRE API...');await sleep(600);
     addLog('✓ Token OAuth2 obtenido · scope=contribuyentes');setProgress(10);
     addLog('Consultando portal de credenciales SOL...');await sleep(400);
-    addLog(`✓ ${periodos.length} período(s) × ${ops.length} operacion(es) = ${totalJobs} jobs`);setProgress(15);
+    addLog(`✓ ${periodos.length} Período(s) × ${ops.length} operacion(es) = ${totalJobs} jobs`);setProgress(15);
     for(let i=0;i<periodos.length;i++){
       const p=periodos[i];
       for(let j=0;j<ops.length;j++){
         const op=ops[j];
-        addLog(`[JOB-${p}-${op}] Consultando ${op.toLowerCase()} del período ${p}...`);await sleep(500);
+        addLog(`[JOB-${p}-${op}] Consultando ${op.toLowerCase()} del Período ${p}...`);await sleep(500);
         addLog(`[JOB-${p}-${op}] Descargando XML...`);await sleep(300);
         addLog(`[JOB-${p}-${op}] Descargando PDF...`);await sleep(200);
         addLog(`[JOB-${p}-${op}] Descargando CDR...`);await sleep(200);
@@ -1094,7 +1097,7 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
 
   return <div style={{animation:'fadeIn .2s ease'}}>
     <div style={{marginBottom:'1.5rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-      <div><div style={{fontSize:22,fontWeight:800,color:C.t1}}>Descarga Masiva SUNAT</div><div style={{fontSize:13,color:C.t3}}>Parser XML UBL 2.1 real · Clasificación IA · Jobs por período</div></div>
+      <div><div style={{fontSize:22,fontWeight:800,color:C.t1}}>Descarga Masiva SUNAT</div><div style={{fontSize:13,color:C.t3}}>Parser XML UBL 2.1 real · Clasificación IA · Jobs por Período</div></div>
       <Badge label="API real → BD" color="green"/>
     </div>
 
@@ -1121,7 +1124,7 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
             </div>
           ))}
           <div style={{marginTop:6,background:C.blueL,borderRadius:6,padding:'6px 8px',fontSize:10,color:C.blue}}>
-            {periodos.length} período(s) · {jobs.length} jobs
+            {periodos.length} Período(s) · {jobs.length} jobs
           </div>
         </div>
         {/* Tipos y archivos */}
@@ -2846,6 +2849,8 @@ export default function Dashboard() {
     reportes:     <ReportesView empresa={empresa}/>,
     copiloto:     <CopilotoView docs={docs} movs={movs} detrs={detrs}/>,
     alertas:      <AlertasView empresa={empresa} user={user} addToast={addToast}/>,
+    calculadora:  <CalculadoraImpuestos empresa={empresa} period={period}/>,
+    calendario:   <CalendarioTributario empresa={empresa} addToast={addToast}/>,
     multiempresa: <MultiEmpresaView user={user}/>,
     panel_clientes: <PanelClientesView user={user} onNav={setActive}/>,
     concar:       <ConcarView docs={docs} empresa={empresa} addToast={addToast} period={period}/>,
@@ -2869,3 +2874,420 @@ export default function Dashboard() {
     </div>
   </div>;
 }
+
+// CALCULADORA IMPUESTOS
+
+// ----------------------------------------------------------
+//  CALCULADORA DE IMPUESTOS
+// ----------------------------------------------------------
+function CalculadoraImpuestos({empresa,period:globalPeriod}:{empresa:Company|null;period:string}) {
+  const [period,setPeriod]=useState(globalPeriod);
+  const [data,setData]=useState<{igvCredito:number;igvDebito:number;igvNeto:number;ingresosNetos:number}|null>(null);
+  const [loading,setLoading]=useState(false);
+  const [metodo,setMetodo]=useState<'coeficiente'|'porcentaje'|'mype'>('porcentaje');
+  const [coef,setCoef]=useState('0.0150');
+  const [patrimonio,setPatrimonio]=useState('');
+  const fmtS=(n:number)=>'S/ '+new Intl.NumberFormat('es-PE',{minimumFractionDigits:2}).format(Math.abs(n));
+  const MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const periodoLabel=(p:string)=>{const[y,m]=p.split('-');return `${MESES[parseInt(m)-1]} ${y}`;};
+
+  useEffect(()=>{
+    if(!empresa?.id) return;
+    setLoading(true);
+    fetch(`/api/calculadora?companyId=${empresa.id}&period=${period}`,{headers:H()})
+      .then(r=>r.json()).then(d=>{if(d.ok)setData(d.data);setLoading(false);});
+  },[empresa?.id,period]);
+
+  const pct = metodo==='coeficiente' ? parseFloat(coef)||0 : metodo==='mype' ? 0.01 : 0.015;
+  const rentaPago = data ? Math.max(0, data.ingresosNetos * pct) : 0;
+  const patrimonioNum = parseFloat(patrimonio.replace(/,/g,''))||0;
+  const itanAnual = patrimonioNum > 1000000 ? (patrimonioNum - 1000000) * 0.004 : 0;
+  const itanMensual = itanAnual / 12;
+  const igvNeto = data?.igvNeto || 0;
+  const totalPDT = Math.max(0,igvNeto) + rentaPago + itanMensual;
+
+  return <div style={{animation:'fadeIn .2s ease',maxWidth:900}}>
+    <div style={{marginBottom:'1.5rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <div><div style={{fontSize:22,fontWeight:800,color:C.t1}}>?? Calculadora de Impuestos</div>
+        <div style={{fontSize:13,color:C.t3,marginTop:4}}>IGV � Renta � ITAN � Resumen PDT 621</div></div>
+      <select value={period} onChange={e=>setPeriod(e.target.value)}
+        style={{padding:'.4rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:12}}>
+        {PERIOD_OPTIONS.map(p=><option key={p}>{p}</option>)}
+      </select>
+    </div>
+
+    {loading&&<div style={{display:'flex',justifyContent:'center',padding:'2rem'}}><Spinner size={28}/></div>}
+    {!loading&&!empresa&&<EmptyState icon="??" title="Selecciona una empresa" sub="Elige una empresa para calcular impuestos."/>}
+    {!loading&&empresa&&data&&<>
+      {/* SECCI�N 1 � IGV */}
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1rem'}}>
+        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem',display:'flex',alignItems:'center',gap:8}}>
+          <span style={{background:C.blueM,color:C.blue,borderRadius:6,padding:'2px 10px',fontSize:11}}>IGV</span>
+          Impuesto General a las Ventas � {periodoLabel(period)}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+          <div style={{background:C.greenL,border:`1px solid ${C.greenM}`,borderRadius:8,padding:'1rem',textAlign:'center'}}>
+            <div style={{fontSize:10,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>IGV Cr�dito Fiscal</div>
+            <div style={{fontSize:20,fontWeight:800,color:C.green}}>{fmtS(data.igvCredito)}</div>
+            <div style={{fontSize:10,color:C.t4,marginTop:2}}>Compras aceptadas</div>
+          </div>
+          <div style={{background:C.redL,border:`1px solid ${C.redM}`,borderRadius:8,padding:'1rem',textAlign:'center'}}>
+            <div style={{fontSize:10,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>IGV D�bito Fiscal</div>
+            <div style={{fontSize:20,fontWeight:800,color:C.red}}>{fmtS(data.igvDebito)}</div>
+            <div style={{fontSize:10,color:C.t4,marginTop:2}}>Ventas aceptadas</div>
+          </div>
+          <div style={{background:igvNeto>0?C.redL:C.greenL,border:`1px solid ${igvNeto>0?C.redM:C.greenM}`,borderRadius:8,padding:'1rem',textAlign:'center'}}>
+            <div style={{fontSize:10,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>
+              {igvNeto>0?'IGV Neto a Pagar':'Saldo a Favor'}
+            </div>
+            <div style={{fontSize:20,fontWeight:800,color:igvNeto>0?C.red:C.green}}>{fmtS(Math.abs(igvNeto))}</div>
+            <div style={{fontSize:10,color:C.t4,marginTop:2}}>D�bito - Cr�dito</div>
+          </div>
+        </div>
+      </div>
+
+      {/* SECCI�N 2 � Renta */}
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1rem'}}>
+        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem',display:'flex',alignItems:'center',gap:8}}>
+          <span style={{background:C.amberM,color:C.amber,borderRadius:6,padding:'2px 10px',fontSize:11}}>RENTA</span>
+          Pago a Cuenta Renta Mensual
+        </div>
+        <div style={{display:'flex',gap:12,marginBottom:'1rem',flexWrap:'wrap'}}>
+          {([['porcentaje','Porcentaje (1.5%)'],['coeficiente','Coeficiente PDT'],['mype','MYPE Tributario (1%)']] as [string,string][]).map(([v,l])=>(
+            <label key={v} style={{display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer',fontWeight:metodo===v?700:400,color:metodo===v?C.blue:C.t2}}>
+              <input type="radio" checked={metodo===v} onChange={()=>setMetodo(v as 'coeficiente'|'porcentaje'|'mype')} style={{accentColor:C.blue}}/>{l}
+            </label>
+          ))}
+        </div>
+        {metodo==='coeficiente'&&(
+          <div style={{marginBottom:'1rem',display:'flex',alignItems:'center',gap:8}}>
+            <span style={{fontSize:13,color:C.t2}}>Coeficiente:</span>
+            <input value={coef} onChange={e=>setCoef(e.target.value)} style={{width:100,padding:'.4rem .6rem',border:`1px solid ${C.border}`,borderRadius:6,fontSize:13,fontFamily:'JetBrains Mono,monospace'}}/>
+          </div>
+        )}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+          <div style={{background:C.bg,borderRadius:8,padding:'1rem',textAlign:'center'}}>
+            <div style={{fontSize:10,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Ingresos Netos</div>
+            <div style={{fontSize:18,fontWeight:800,color:C.t1}}>{fmtS(data.ingresosNetos)}</div>
+          </div>
+          <div style={{background:C.bg,borderRadius:8,padding:'1rem',textAlign:'center'}}>
+            <div style={{fontSize:10,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Tasa Aplicada</div>
+            <div style={{fontSize:18,fontWeight:800,color:C.amber}}>{(pct*100).toFixed(2)}%</div>
+          </div>
+          <div style={{background:C.amberL,border:`1px solid ${C.amberM}`,borderRadius:8,padding:'1rem',textAlign:'center'}}>
+            <div style={{fontSize:10,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Pago a Cuenta Renta</div>
+            <div style={{fontSize:18,fontWeight:800,color:C.amber}}>{fmtS(rentaPago)}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* SECCI�N 3 � ITAN */}
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginBottom:'1rem'}}>
+        <div style={{fontSize:13,fontWeight:700,color:C.t1,marginBottom:'1rem',display:'flex',alignItems:'center',gap:8}}>
+          <span style={{background:C.violetM,color:C.violet,borderRadius:6,padding:'2px 10px',fontSize:11}}>ITAN</span>
+          Impuesto Temporal a los Activos Netos
+          <span style={{fontSize:11,color:C.t4,fontWeight:400}}>(solo si patrimonio neto &gt; S/ 1,000,000)</span>
+        </div>
+        <div style={{display:'flex',gap:12,alignItems:'flex-end',marginBottom:'1rem'}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:11,color:C.t4,marginBottom:4}}>Patrimonio Neto (S/)</div>
+            <input value={patrimonio} onChange={e=>setPatrimonio(e.target.value)} placeholder="Ej: 1500000"
+              style={{width:'100%',padding:'.5rem .75rem',border:`1px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:'JetBrains Mono,monospace'}}/>
+          </div>
+          <div style={{textAlign:'center',minWidth:140}}>
+            <div style={{fontSize:10,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>ITAN Mensual</div>
+            <div style={{fontSize:18,fontWeight:800,color:patrimonioNum>1000000?C.violet:C.t5}}>{fmtS(itanMensual)}</div>
+          </div>
+        </div>
+        {patrimonioNum>1000000&&<div style={{fontSize:12,color:C.t3}}>
+          ITAN anual: {fmtS(itanAnual)} (0.4% sobre exceso de S/ 1,000,000) � 12 = {fmtS(itanMensual)}/mes
+        </div>}
+      </div>
+
+      {/* SECCI�N 4 � Resumen PDT 621 */}
+      <div style={{background:C.navy,borderRadius:12,padding:'1.5rem',color:'#fff'}}>
+        <div style={{fontSize:14,fontWeight:800,textAlign:'center',marginBottom:'1rem',letterSpacing:.5}}>RESUMEN PARA PDT 621</div>
+        <div style={{fontSize:12,color:'#94A3B8',textAlign:'center',marginBottom:'1.25rem'}}>Per�odo: {periodoLabel(period)} � {empresa.nombre}</div>
+        <div style={{borderTop:'1px solid rgba(255,255,255,.1)',paddingTop:'1rem'}}>
+          {[
+            ['IGV a pagar',Math.max(0,igvNeto),igvNeto>0?'#F87171':'#34D399'],
+            ['Renta a pagar',rentaPago,'#FCD34D'],
+            ...(itanMensual>0?[['ITAN mensual',itanMensual,'#C4B5FD']]:[] as [string,number,string][]),
+          ].map(([l,v,c])=>(
+            <div key={l as string} style={{display:'flex',justifyContent:'space-between',padding:'.6rem 0',borderBottom:'1px solid rgba(255,255,255,.07)'}}>
+              <span style={{fontSize:13,color:'#CBD5E1'}}>{l as string}</span>
+              <span style={{fontSize:14,fontWeight:700,color:c as string,fontFamily:'JetBrains Mono,monospace'}}>{fmtS(v as number)}</span>
+            </div>
+          ))}
+          <div style={{display:'flex',justifyContent:'space-between',padding:'1rem 0 0',marginTop:4}}>
+            <span style={{fontSize:15,fontWeight:800,color:'#fff'}}>TOTAL A PAGAR</span>
+            <span style={{fontSize:20,fontWeight:900,color:'#60A5FA',fontFamily:'JetBrains Mono,monospace'}}>{fmtS(totalPDT)}</span>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:10,marginTop:'1.25rem',justifyContent:'center'}}>
+          <Btn color="blue" onClick={()=>{
+            const url=`/api/reports/cliente-pdf?companyId=${empresa.id}&period=${period}&token=${gT()}`;
+            window.open(url,'_blank');
+          }}>?? Exportar PDF</Btn>
+        </div>
+      </div>
+    </>}
+  </div>;
+}
+
+
+// ----------------------------------------------------------
+//  CALENDARIO TRIBUTARIO
+// ----------------------------------------------------------
+function CalendarioTributario({empresa,addToast}:{empresa:Company|null;addToast:(m:string,t?:ToastType)=>void}) {
+  const today = new Date();
+  const [viewDate,setViewDate]=useState(new Date(today.getFullYear(),today.getMonth(),1));
+  const MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const DIAS=['Dom','Lun','Mar','Mi�','Jue','Vie','S�b'];
+
+  // Tabla vencimientos PDT 621 SUNAT 2026 por �ltimo d�gito RUC
+  const VENC_PDT: Record<string,number> = {'0':13,'1':14,'2':15,'3':16,'4':17,'5':18,'6':21,'7':22,'8':23,'9':24};
+  const ruc = empresa?.ruc || '';
+  const ultimoDigito = ruc.slice(-1);
+  const diaPDT = VENC_PDT[ultimoDigito] || 15;
+
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const firstDay = new Date(year,month,1).getDay();
+  const daysInMonth = new Date(year,month+1,0).getDate();
+
+  // Calcular �ltimo d�a h�bil del mes
+  const lastHabil = (()=>{
+    let d = new Date(year,month+1,0);
+    while(d.getDay()===0||d.getDay()===6) d.setDate(d.getDate()-1);
+    return d.getDate();
+  })();
+
+  type Evento = {dia:number;titulo:string;tipo:'detraccion'|'pdt'|'afp'|'retencion';monto?:string;link?:string};
+  const eventos: Evento[] = [
+    {dia:12,titulo:'Vencimiento Detracciones',tipo:'detraccion',link:'https://www.sunat.gob.pe/ol-ti-itconsultaDetracciones/consultaDetracciones.htm'},
+    {dia:diaPDT,titulo:`PDT 621 IGV-Renta (RUC termina en ${ultimoDigito||'?'})`,tipo:'pdt',link:'https://www.sunat.gob.pe/ol-ti-itconsultaRuc/jcrS00Alias'},
+    {dia:15,titulo:'AFP y ONP',tipo:'afp'},
+    {dia:lastHabil,titulo:'Retenciones y Percepciones',tipo:'retencion'},
+  ];
+
+  const todayDate = today.getDate();
+  const isCurrentMonth = today.getMonth()===month && today.getFullYear()===year;
+
+  const getEventColor = (dia:number,tipo:string) => {
+    if(!isCurrentMonth) return {bg:'#F1F5F9',color:C.t3,border:C.border};
+    const diff = dia - todayDate;
+    if(diff<0) return {bg:'#F1F5F9',color:C.t4,border:C.border}; // pasado
+    if(diff<=3) return {bg:C.amberL,color:C.amber,border:C.amberM}; // urgente
+    return {bg:C.greenL,color:C.green,border:C.greenM}; // pr�ximo
+  };
+
+  const TIPO_ICONS: Record<string,string> = {detraccion:'?',pdt:'??',afp:'??',retencion:'??'};
+
+  const cells: (number|null)[] = [...Array(firstDay).fill(null), ...Array.from({length:daysInMonth},(_,i)=>i+1)];
+  while(cells.length%7!==0) cells.push(null);
+
+  return <div style={{animation:'fadeIn .2s ease',maxWidth:900}}>
+    <div style={{marginBottom:'1.5rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <div><div style={{fontSize:22,fontWeight:800,color:C.t1}}>?? Calendario Tributario</div>
+        <div style={{fontSize:13,color:C.t3,marginTop:4}}>Vencimientos SUNAT 2026 � {empresa?`RUC: ${ruc} (d�gito ${ultimoDigito})`:'Selecciona empresa'}</div>
+      </div>
+      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+        <Btn size="sm" color="ghost" onClick={()=>setViewDate(new Date(year,month-1,1))}>?</Btn>
+        <span style={{fontSize:14,fontWeight:700,color:C.t1,minWidth:140,textAlign:'center'}}>{MESES[month]} {year}</span>
+        <Btn size="sm" color="ghost" onClick={()=>setViewDate(new Date(year,month+1,1))}>?</Btn>
+      </div>
+    </div>
+
+    {/* Leyenda */}
+    <div style={{display:'flex',gap:12,marginBottom:'1rem',flexWrap:'wrap'}}>
+      {[['??','Vencido',C.red],['??','Vence en 3 d�as',C.amber],['??','Pr�ximo',C.green],['?','Pasado',C.t4]].map(([i,l,c])=>(
+        <div key={l as string} style={{display:'flex',alignItems:'center',gap:5,fontSize:12,color:c as string}}>
+          <span>{i as string}</span><span>{l as string}</span>
+        </div>
+      ))}
+    </div>
+
+    {/* Calendario */}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,overflow:'hidden',marginBottom:'1.5rem'}}>
+      {/* Header d�as */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',background:C.navy}}>
+        {DIAS.map(d=><div key={d} style={{padding:'.6rem',textAlign:'center',fontSize:11,fontWeight:700,color:'rgba(255,255,255,.5)'}}>{d}</div>)}
+      </div>
+      {/* Celdas */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>
+        {cells.map((dia,i)=>{
+          const evs = dia ? eventos.filter(e=>e.dia===dia) : [];
+          const isToday = isCurrentMonth && dia===todayDate;
+          return <div key={i} style={{minHeight:80,padding:'6px',border:`1px solid ${C.border}`,background:isToday?C.blueL:'transparent',position:'relative'}}>
+            {dia&&<div style={{fontSize:12,fontWeight:isToday?800:400,color:isToday?C.blue:C.t3,marginBottom:4}}>{dia}</div>}
+            {evs.map((ev,ei)=>{
+              const s=getEventColor(ev.dia,ev.tipo);
+              return <div key={ei} style={{background:s.bg,border:`1px solid ${s.border}`,borderRadius:4,padding:'2px 5px',marginBottom:2,cursor:ev.link?'pointer':'default'}}
+                onClick={()=>ev.link&&window.open(ev.link,'_blank')}>
+                <div style={{fontSize:9,fontWeight:700,color:s.color,lineHeight:1.3}}>{TIPO_ICONS[ev.tipo]} {ev.titulo.substring(0,20)}</div>
+              </div>;
+            })}
+          </div>;
+        })}
+      </div>
+    </div>
+
+    {/* Lista de eventos del mes */}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+      <div style={{padding:'1rem 1.25rem',borderBottom:`1px solid ${C.border}`,fontSize:13,fontWeight:700}}>
+        Vencimientos de {MESES[month]} {year}
+      </div>
+      {eventos.sort((a,b)=>a.dia-b.dia).map((ev,i)=>{
+        const s=getEventColor(ev.dia,ev.tipo);
+        const diff=isCurrentMonth?ev.dia-todayDate:999;
+        const estado=diff<0?'Pasado':diff===0?'HOY':diff<=3?`En ${diff} d�as`:`${ev.dia}/${String(month+1).padStart(2,'0')}/${year}`;
+        return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'.9rem 1.25rem',borderBottom:`1px solid ${C.border}`,background:i%2===0?C.card:C.bg}}>
+          <div style={{display:'flex',gap:10,alignItems:'center'}}>
+            <div style={{width:36,height:36,borderRadius:8,background:s.bg,border:`1px solid ${s.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>{TIPO_ICONS[ev.tipo]}</div>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:C.t1}}>{ev.titulo}</div>
+              <div style={{fontSize:11,color:C.t4,marginTop:2}}>D�a {ev.dia} del mes</div>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <span style={{fontSize:12,fontWeight:700,color:s.color,background:s.bg,border:`1px solid ${s.border}`,borderRadius:6,padding:'3px 10px'}}>{estado}</span>
+            {ev.link&&<Btn size="sm" color="ghost" onClick={()=>window.open(ev.link,'_blank')}>SUNAT ?</Btn>}
+          </div>
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+
+// ----------------------------------------------------------
+//  COMPARATIVO A�O ANTERIOR
+// ----------------------------------------------------------
+function ComparativoAnterior({empresa,period}:{empresa:Company|null;period:string}) {
+  const [data,setData]=useState<{actual:Record<string,number>;anterior:Record<string,number>;meses:string[]}>({actual:{},anterior:{},meses:[]});
+  const [loading,setLoading]=useState(false);
+  const MESES_CORTO=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+  useEffect(()=>{
+    if(!empresa?.id) return;
+    setLoading(true);
+    const [y,m]=period.split('-').map(Number);
+    const periodos:string[]=[];
+    for(let i=11;i>=0;i--){
+      let pm=m-i; let py=y;
+      if(pm<=0){pm+=12;py--;}
+      periodos.push(`${py}-${String(pm).padStart(2,'0')}`);
+    }
+    const periodos_ant=periodos.map(p=>{const[py,pm]=p.split('-').map(Number);return `${py-1}-${String(pm).padStart(2,'0')}`});
+    const allPeriods=[...periodos,...periodos_ant];
+    fetch(`/api/dashboard?companyId=${empresa.id}&period=${period}`,{headers:H()})
+      .then(r=>r.json()).then(d=>{
+        if(!d.ok){setLoading(false);return;}
+        const chart=(d.data.chartData||[]) as {period:string;compras:number;ventas:number}[];
+        const actual:Record<string,number>={};
+        const anterior:Record<string,number>={};
+        chart.forEach((c:{period:string;compras:number;ventas:number})=>{
+          actual[c.period]=(c.compras||0)+(c.ventas||0);
+        });
+        setData({actual,anterior,meses:periodos});
+        setLoading(false);
+      });
+  },[empresa?.id,period]);
+
+  const fmtS=(n:number)=>'S/ '+new Intl.NumberFormat('es-PE',{minimumFractionDigits:0}).format(Math.abs(n));
+  const fmtPct=(a:number,b:number)=>{
+    if(!b) return null;
+    const pct=((a-b)/b)*100;
+    return {pct,up:pct>=0};
+  };
+
+  const chartRows=data.meses.map(p=>{
+    const [y,m]=p.split('-').map(Number);
+    const pAnt=`${y-1}-${String(m).padStart(2,'0')}`;
+    return {
+      mes:MESES_CORTO[m-1],
+      period:p,
+      actual:data.actual[p]||0,
+      anterior:data.anterior[pAnt]||0,
+    };
+  });
+
+  const hasData=chartRows.some(r=>r.actual>0);
+  const hasAnt=chartRows.some(r=>r.anterior>0);
+
+  if(loading) return <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'2rem',textAlign:'center',marginTop:'1.5rem'}}><Spinner size={24}/></div>;
+  if(!hasData) return null;
+
+  const variaciones=chartRows.filter(r=>r.actual>0).map(r=>fmtPct(r.actual,r.anterior)).filter(Boolean) as {pct:number;up:boolean}[];
+  const avgVar=variaciones.length?variaciones.reduce((s,v)=>s+v.pct,0)/variaciones.length:0;
+  const mejorMes=chartRows.reduce((best,r)=>r.actual>best.actual?r:best,chartRows[0]);
+  const peorMes=chartRows.filter(r=>r.actual>0).reduce((worst,r)=>r.actual<worst.actual?r:worst,chartRows.find(r=>r.actual>0)||chartRows[0]);
+
+  return <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.25rem',marginTop:'1.5rem'}}>
+    <div style={{fontSize:14,fontWeight:700,color:C.t1,marginBottom:'1rem'}}>?? Comparativo vs A�o Anterior</div>
+
+    {/* KPIs */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:'1.25rem'}}>
+      <div style={{background:C.bg,borderRadius:8,padding:'.75rem',textAlign:'center'}}>
+        <div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Crecimiento promedio</div>
+        <div style={{fontSize:16,fontWeight:800,color:avgVar>=0?C.green:C.red}}>{avgVar>=0?'+':''}{avgVar.toFixed(1)}%</div>
+      </div>
+      <div style={{background:C.bg,borderRadius:8,padding:'.75rem',textAlign:'center'}}>
+        <div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Mejor mes</div>
+        <div style={{fontSize:16,fontWeight:800,color:C.blue}}>{mejorMes?.mes||'�'}</div>
+        <div style={{fontSize:10,color:C.t4}}>{fmtS(mejorMes?.actual||0)}</div>
+      </div>
+      <div style={{background:C.bg,borderRadius:8,padding:'.75rem',textAlign:'center'}}>
+        <div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Peor mes</div>
+        <div style={{fontSize:16,fontWeight:800,color:C.amber}}>{peorMes?.mes||'�'}</div>
+        <div style={{fontSize:10,color:C.t4}}>{fmtS(peorMes?.actual||0)}</div>
+      </div>
+      <div style={{background:C.bg,borderRadius:8,padding:'.75rem',textAlign:'center'}}>
+        <div style={{fontSize:9,color:C.t4,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Datos a�o ant.</div>
+        <div style={{fontSize:16,fontWeight:800,color:hasAnt?C.green:C.t4}}>{hasAnt?'Disponibles':'Sin datos'}</div>
+      </div>
+    </div>
+
+    {/* Gr�fico */}
+    <div style={{height:200,marginBottom:'1.25rem'}}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={chartRows} margin={{top:0,right:0,left:0,bottom:0}}>
+          <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+          <XAxis dataKey="mes" tick={{fontSize:10,fill:C.t4}}/>
+          <YAxis tick={{fontSize:10,fill:C.t4}} tickFormatter={(v:number)=>'S/'+Math.round(v/1000)+'k'}/>
+          <Tooltip formatter={(v:number)=>fmtS(v)} labelStyle={{color:C.t1}} contentStyle={{borderRadius:8,border:`1px solid ${C.border}`,fontSize:12}}/>
+          <Legend wrapperStyle={{fontSize:11}}/>
+          <Bar dataKey="actual" name="Este a�o" fill={C.blue} radius={[3,3,0,0]}/>
+          <Bar dataKey="anterior" name="A�o anterior" fill="#CBD5E1" radius={[3,3,0,0]}/>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+
+    {/* Tabla comparativa */}
+    <div style={{overflowX:'auto'}}>
+      <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+        <thead>
+          <tr style={{background:C.bg}}>
+            <Th>Mes</Th><Th right>Este a�o</Th><Th right>A�o anterior</Th><Th right>Variaci�n</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {chartRows.filter(r=>r.actual>0).map((r,i)=>{
+            const v=fmtPct(r.actual,r.anterior);
+            return <tr key={r.period} style={{background:i%2===0?C.card:C.bg}}>
+              <Td bold>{r.mes}</Td>
+              <Td right mono>{fmtS(r.actual)}</Td>
+              <Td right mono muted>{r.anterior>0?fmtS(r.anterior):'�'}</Td>
+              <Td right>
+                {v?<span style={{color:v.up?C.green:C.red,fontWeight:700}}>{v.up?'?':'?'} {Math.abs(v.pct).toFixed(1)}%</span>:<span style={{color:C.t4}}>�</span>}
+              </Td>
+            </tr>;
+          })}
+        </tbody>
+      </table>
+    </div>
+    {!hasAnt&&<div style={{fontSize:11,color:C.t4,textAlign:'center',marginTop:'1rem'}}>Sin datos del per�odo anterior disponibles</div>}
+  </div>;
+}
+
