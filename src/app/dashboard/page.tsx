@@ -3280,7 +3280,7 @@ function ComparativoAnterior({empresa,period}:{empresa:Company|null;period:strin
               <Td right mono>{fmtS(r.actual)}</Td>
               <Td right mono muted>{r.anterior>0?fmtS(r.anterior):'�'}</Td>
               <Td right>
-                {v?<span style={{color:v.up?C.green:C.red,fontWeight:700}}>{v.up?'?':'?'} {Math.abs(v.pct).toFixed(1)}%</span>:<span style={{color:C.t4}}>�</span>}
+                {v?<span style={{color:v.up?C.green:C.red,fontWeight:700}}>{v.up?'↑':'↓'} {Math.abs(v.pct).toFixed(1)}%</span>:<span style={{color:C.t4}}>�</span>}
               </Td>
             </tr>;
           })}
