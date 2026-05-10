@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
 
       // ── Alertas WhatsApp post-descarga ──────────────────
       try {
-        await runAlertas(company.id as string, company.nombre as string || company.ruc as string);
+        await runAlertas(company.id as string, String(company.businessName || company.nombre || company.ruc));
       } catch (alertErr) {
         console.error(`[CRON] Error alertas ${company.ruc}:`, (alertErr as Error).message);
       }

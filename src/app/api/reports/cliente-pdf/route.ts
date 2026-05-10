@@ -60,7 +60,7 @@ async function generarPDF(
 
     // ── DATOS EMPRESA ────────────────────────────────────
     doc.fillColor(NAVY).fontSize(14).font('Helvetica-Bold')
-       .text(String(company.nombre || company.ruc), 50, 130);
+       .text(String(company.businessName || company.nombre || company.ruc), 50, 130);
     doc.fillColor(GRAY).fontSize(10).font('Helvetica')
        .text(`RUC: ${company.ruc}  ·  Período: ${periodoLabel(period)}  ·  Generado: ${fmtFecha(new Date().toISOString())}`, 50, 148);
 
@@ -262,7 +262,7 @@ export async function GET(req: NextRequest) {
     const appUrl = process.env.APP_URL || 'http://localhost:3000';
     const html = emailTemplate(
       `Reporte Contable — ${periodoLabel(period)}`,
-      `<p style="font-size:14px;color:#374151;">Adjunto el reporte contable de <strong>${company.nombre}</strong> correspondiente al período <strong>${periodoLabel(period)}</strong>.</p>
+      `<p style="font-size:14px;color:#374151;">Adjunto el reporte contable de <strong>${String(company.businessName || company.nombre || company.ruc)}</strong> correspondiente al período <strong>${periodoLabel(period)}</strong>.</p>
        <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;">
          <tr><td style="padding:8px 0;border-bottom:1px solid #F1F5F9;font-size:13px;color:#374151;">Total Compras</td><td style="text-align:right;font-weight:700;font-size:13px;">S/ ${new Intl.NumberFormat('es-PE',{minimumFractionDigits:2}).format(totalCompras)}</td></tr>
          <tr><td style="padding:8px 0;border-bottom:1px solid #F1F5F9;font-size:13px;color:#374151;">Total Ventas</td><td style="text-align:right;font-weight:700;font-size:13px;">S/ ${new Intl.NumberFormat('es-PE',{minimumFractionDigits:2}).format(totalVentas)}</td></tr>
@@ -274,7 +274,7 @@ export async function GET(req: NextRequest) {
 
     await sendEmail({
       to: sendTo,
-      subject: `📊 Reporte Contable ${periodoLabel(period)} — ${company.nombre}`,
+      subject: `📊 Reporte Contable ${periodoLabel(period)} — ${String(company.businessName || company.nombre || company.ruc)}`,
       html,
     });
 

@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
       const company = await findCompanyById(companyId);
       if (!company) return err('Empresa no encontrada');
 
-      const result = await runAlertas(companyId, (company.nombre || company.ruc) as string);
+      const result = await runAlertas(companyId, String(company.businessName || company.nombre || company.ruc));
 
       await createAuditLog({
         userId: user.sub, userEmail: user.email, userRole: user.role,

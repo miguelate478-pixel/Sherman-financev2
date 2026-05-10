@@ -12,7 +12,9 @@ export async function GET(req: NextRequest) {
   const period = searchParams.get('period') || new Date().toISOString().slice(0, 7);
 
   const companies = await getAllCompanies() as Record<string, unknown>[];
-  const activas   = companies.filter(c => c.status === 'activo');
+  // Incluir todas las empresas (activas, prueba, o sin status definido)
+  // Solo excluir las explícitamente inactivas
+  const activas = companies.filter(c => c.status !== 'inactivo');
 
   const results = await Promise.all(activas.map(async (company) => {
     const cid = company.id as string;
@@ -69,7 +71,7 @@ export async function GET(req: NextRequest) {
 
     return {
       id:           cid,
-      nombre:       String(company.nombre || ''),
+      nombre:       String(company.businessName || company.nombre || company.ruc || ''),
       ruc:          String(company.ruc || ''),
       sector:       String(company.sector || ''),
       credEstado:   (company.credential as Record<string,unknown>)?.status || 'sin_configurar',

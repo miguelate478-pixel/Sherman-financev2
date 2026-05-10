@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
 
     return {
       id:           cid,
-      nombre:       String(c.nombre || ''),
+      nombre:       String(c.businessName || c.nombre || c.ruc || ''),
       ruc:          String(c.ruc || ''),
       sector:       String(c.sector || ''),
       status:       String(c.status || 'activo'),

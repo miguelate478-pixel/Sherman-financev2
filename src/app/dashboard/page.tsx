@@ -1993,7 +1993,10 @@ function MultiEmpresaView({user}:{user:User|null}) {
   useEffect(()=>{
     setLoading(true);
     fetch(`/api/dashboard/multiempresa?period=${period}`,{headers:H()})
-      .then(r=>r.json()).then(d=>{if(d.ok)setData(d.data);setLoading(false);});
+      .then(r=>r.json())
+      .then(d=>{ if(d.ok) setData(d.data); else console.error('[MultiEmpresa]',d.error); })
+      .catch(e=>console.error('[MultiEmpresa] fetch error:',e))
+      .finally(()=>setLoading(false));
   },[period]);
 
   if(user?.role!=='Administrador') return <EmptyState icon="🔒" title="Acceso restringido" sub="Solo Administradores pueden ver este módulo."/>;
@@ -3144,7 +3147,7 @@ function CalculadoraImpuestos({empresa,period:globalPeriod}:{empresa:Company|nul
       {/* SECCI�N 4 � Resumen PDT 621 */}
       <div style={{background:C.navy,borderRadius:12,padding:'1.5rem',color:'#fff'}}>
         <div style={{fontSize:14,fontWeight:800,textAlign:'center',marginBottom:'1rem',letterSpacing:.5}}>RESUMEN PARA PDT 621</div>
-        <div style={{fontSize:12,color:'#94A3B8',textAlign:'center',marginBottom:'1.25rem'}}>Per�odo: {periodoLabel(period)} � {empresa.nombre}</div>
+        <div style={{fontSize:12,color:'#94A3B8',textAlign:'center',marginBottom:'1.25rem'}}>Período: {periodoLabel(period)} · {empresa.nombre}</div>
         <div style={{borderTop:'1px solid rgba(255,255,255,.1)',paddingTop:'1rem'}}>
           {[
             ['IGV a pagar',Math.max(0,igvNeto),igvNeto>0?'#F87171':'#34D399'],
