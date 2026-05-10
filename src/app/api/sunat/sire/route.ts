@@ -170,6 +170,7 @@ export async function PUT(req: NextRequest) {
           },
           {
             rucEmisor,
+            tipoComprobante: tipo,
             serie,
             numero,
           }

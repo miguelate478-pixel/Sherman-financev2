@@ -9,6 +9,9 @@ const nextConfig = {
     "speakeasy",
     "qrcode",
     "puppeteer-core",
+    "puppeteer",
+    "puppeteer-extra",
+    "puppeteer-extra-plugin-stealth",
     "@sparticuz/chromium",
   ],
   async headers() {

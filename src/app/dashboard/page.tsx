@@ -404,6 +404,7 @@ const NAV_GROUPS = [
     {id:'descarga_masiva',i:'↓↓', l:'Descarga Masiva', hl:true},
     {id:'jobs',           i:'▷',  l:'Jobs y Procesos'},
     {id:'buzon_sol',      i:'📬', l:'Buzón SOL'},
+    {id:'consultar_xml',  i:'🔍', l:'Consultar XML'},
   ]},
   { g:'Documentos', items:[
     {id:'compras',        i:'↓',  l:'Compras'},
@@ -2793,6 +2794,175 @@ function ConfigView({addToast,user}:{addToast:(m:string,t?:ToastType)=>void;user
 }
 
 // ══════════════════════════════════════════════════════════
+//  CONSULTAR XML INDIVIDUAL
+// ══════════════════════════════════════════════════════════
+function ConsultarXmlView({empresa,addToast}:{empresa:Company|null;addToast:(m:string,t?:ToastType)=>void}) {
+  const [form,setForm]=useState({rucEmisor:'',tipoComprobante:'01',serie:'',numero:''});
+  const [loading,setLoading]=useState(false);
+  const [result,setResult]=useState<{success:boolean;lines?:Record<string,unknown>[];xmlContent?:string;xmlSize?:number;error?:string;logs?:string[]}|null>(null);
+  const [saving,setSaving]=useState(false);
+  const set=(k:string)=>(v:string)=>setForm(f=>({...f,[k]:v}));
+  const TIPOS=[['01','Factura'],['03','Boleta'],['07','Nota de Crédito'],['08','Nota de Débito']];
+  const fmtS=(n:number)=>'S/ '+new Intl.NumberFormat('es-PE',{minimumFractionDigits:2}).format(Math.abs(n));
+
+  const consultar=async()=>{
+    if(!empresa?.id){addToast('Selecciona empresa','error');return;}
+    if(!form.rucEmisor||!form.serie||!form.numero){addToast('Completa todos los campos','error');return;}
+    if(!/^\d{11}$/.test(form.rucEmisor)){addToast('RUC emisor debe tener 11 dígitos','error');return;}
+    setLoading(true);setResult(null);
+    try{
+      const r=await fetch('/api/sunat/consultar-xml',{method:'POST',headers:H(),body:JSON.stringify({companyId:empresa.id,...form})});
+      const d=await r.json();
+      if(d.ok) setResult(d.data);
+      else addToast(d.error||'Error','error');
+    }catch(e){addToast((e as Error).message,'error');}
+    setLoading(false);
+  };
+
+  const guardarEnBD=async()=>{
+    if(!result?.xmlContent||!empresa?.id) return;
+    setSaving(true);
+    try{
+      const r=await fetch('/api/upload',{method:'POST',headers:{'Authorization':`Bearer ${gT()}`},
+        body:(()=>{const fd=new FormData();fd.append('companyId',empresa.id);fd.append('parseXml','true');fd.append('classifyAI','true');const blob=new Blob([result.xmlContent!],{type:'text/xml'});fd.append('files',blob,`${form.serie}-${form.numero}.xml`);return fd;})()});
+      const d=await r.json();
+      if(d.ok){addToast('Guardado en Compras correctamente','success');}
+      else addToast(d.error||'Error al guardar','error');
+    }catch(e){addToast((e as Error).message,'error');}
+    setSaving(false);
+  };
+
+  const descargarXml=()=>{
+    if(!result?.xmlContent) return;
+    const blob=new Blob([result.xmlContent],{type:'text/xml'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=`${form.rucEmisor}-${form.tipoComprobante}-${form.serie}-${form.numero}.xml`;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+  };
+
+  return <div style={{animation:'fadeIn .2s ease',maxWidth:800}}>
+    <div style={{marginBottom:'1.5rem'}}>
+      <div style={{fontSize:22,fontWeight:800,color:C.t1}}>🔍 Consultar XML Individual</div>
+      <div style={{fontSize:13,color:C.t3,marginTop:4}}>Descarga el XML de un comprobante específico via portal SUNAT · Xvfb + Stealth</div>
+    </div>
+
+    {/* Formulario */}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'1.5rem',marginBottom:'1rem'}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem',marginBottom:'1rem'}}>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,color:C.t3,marginBottom:4}}>RUC Emisor *</div>
+          <input value={form.rucEmisor} onChange={e=>set('rucEmisor')(e.target.value)} placeholder="20XXXXXXXXX"
+            maxLength={11} style={{width:'100%',padding:'.5rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:'JetBrains Mono,monospace',outline:'none'}}/>
+        </div>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,color:C.t3,marginBottom:4}}>Tipo Comprobante *</div>
+          <select value={form.tipoComprobante} onChange={e=>set('tipoComprobante')(e.target.value)}
+            style={{width:'100%',padding:'.5rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:13,outline:'none',background:C.card}}>
+            {TIPOS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,color:C.t3,marginBottom:4}}>Serie *</div>
+          <input value={form.serie} onChange={e=>set('serie')(e.target.value.toUpperCase())} placeholder="F001"
+            style={{width:'100%',padding:'.5rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:'JetBrains Mono,monospace',outline:'none'}}/>
+        </div>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,color:C.t3,marginBottom:4}}>Número *</div>
+          <input value={form.numero} onChange={e=>set('numero')(e.target.value)} placeholder="30587"
+            style={{width:'100%',padding:'.5rem .75rem',border:`1.5px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:'JetBrains Mono,monospace',outline:'none'}}/>
+        </div>
+      </div>
+
+      <div style={{background:C.amberL,border:`1px solid ${C.amberM}`,borderRadius:8,padding:'.75rem 1rem',marginBottom:'1rem',fontSize:12,color:C.amber}}>
+        ⏱ Este proceso puede tardar hasta 60 segundos — SUNAT requiere navegación completa del portal.
+      </div>
+
+      <Btn color="blue" disabled={loading||!empresa?.id} onClick={consultar} full>
+        {loading?<><Spinner size={14} color="#fff"/>Consultando en portal SUNAT...</>:'🔍 Consultar y Descargar XML'}
+      </Btn>
+    </div>
+
+    {/* Logs en tiempo real */}
+    {loading&&<div style={{background:'#0D1117',borderRadius:10,padding:'1rem',marginBottom:'1rem',fontFamily:'JetBrains Mono,monospace',fontSize:11,color:'#93C5FD'}}>
+      <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8}}><Spinner size={12} color="#93C5FD"/><span>Ejecutando scraper con Xvfb...</span></div>
+      <div style={{color:'rgba(255,255,255,.4)'}}>Login SUNAT → Navegación → Formulario → Descarga XML</div>
+    </div>}
+
+    {/* Resultado */}
+    {result&&!loading&&(
+      <div>
+        {result.success?(
+          <>
+            {/* Éxito */}
+            <div style={{background:C.greenL,border:`1px solid ${C.greenM}`,borderRadius:10,padding:'1rem 1.25rem',marginBottom:'1rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div>
+                <div style={{fontWeight:700,color:C.green,fontSize:14}}>✅ XML obtenido correctamente</div>
+                <div style={{fontSize:12,color:C.t3,marginTop:2}}>{result.xmlSize?.toLocaleString()} bytes · {result.lines?.length||0} líneas parseadas</div>
+              </div>
+              <div style={{display:'flex',gap:8}}>
+                <Btn color="teal" size="sm" onClick={descargarXml}>⬇️ Descargar XML</Btn>
+                <Btn color="green" size="sm" disabled={saving} onClick={guardarEnBD}>
+                  {saving?<><Spinner size={11} color="#fff"/>Guardando...</>:'💾 Guardar en Compras'}
+                </Btn>
+              </div>
+            </div>
+
+            {/* Líneas */}
+            {result.lines&&result.lines.length>0&&(
+              <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',marginBottom:'1rem'}}>
+                <div style={{padding:'1rem 1.25rem',borderBottom:`1px solid ${C.border}`,fontSize:13,fontWeight:700}}>
+                  Líneas del comprobante ({result.lines.length})
+                </div>
+                <div style={{overflowX:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse'}}>
+                    <thead><tr><Th center>N°</Th><Th>Descripción</Th><Th right>Cant.</Th><Th right>P.Unit</Th><Th right>IGV</Th><Th right>Total</Th></tr></thead>
+                    <tbody>
+                      {result.lines.map((l,i)=>(
+                        <tr key={i} style={{background:i%2===0?C.card:C.bg}}>
+                          <Td center mono small>{String(l.lineNumber)}</Td>
+                          <Td small><div style={{maxWidth:280,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={String(l.description)}>{String(l.description)}</div></Td>
+                          <Td right mono small>{Number(l.quantity).toFixed(2)} {String(l.unit||'')}</Td>
+                          <Td right mono small>{fmtS(Number(l.unitValue))}</Td>
+                          <Td right mono small>{fmtS(Number(l.igvAmount))}</Td>
+                          <Td right mono bold>{fmtS(Number(l.lineTotal))}</Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{background:C.navy,color:'#fff'}}>
+                        <td colSpan={5} style={{padding:'.5rem .75rem',fontSize:12,fontWeight:700,textAlign:'right'}}>TOTAL</td>
+                        <td style={{padding:'.5rem .75rem',fontSize:13,fontWeight:800,textAlign:'right',fontFamily:'JetBrains Mono,monospace'}}>
+                          {fmtS(result.lines.reduce((s,l)=>s+Number(l.lineTotal),0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        ):(
+          <div style={{background:C.redL,border:`1px solid ${C.redM}`,borderRadius:10,padding:'1.25rem',marginBottom:'1rem'}}>
+            <div style={{fontWeight:700,color:C.red,marginBottom:'.5rem'}}>❌ No se pudo obtener el XML</div>
+            <div style={{fontSize:13,color:C.t2}}>{result.error}</div>
+          </div>
+        )}
+
+        {/* Logs del scraper */}
+        {result.logs&&result.logs.length>0&&(
+          <details style={{marginTop:'1rem'}}>
+            <summary style={{fontSize:12,color:C.t4,cursor:'pointer',padding:'.5rem 0'}}>Ver logs del scraper ({result.logs.length} pasos)</summary>
+            <div style={{background:'#0D1117',borderRadius:8,padding:'1rem',marginTop:'.5rem',fontFamily:'JetBrains Mono,monospace',fontSize:11,maxHeight:200,overflowY:'auto'}}>
+              {result.logs.map((l,i)=><div key={i} style={{color:'rgba(255,255,255,.6)',marginBottom:2}}>{l}</div>)}
+            </div>
+          </details>
+        )}
+      </div>
+    )}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════
 //  BUZÓN SOL
 // ══════════════════════════════════════════════════════════
 function BuzonSOLView({empresa,addToast}:{empresa:Company|null;addToast:(m:string,t?:ToastType)=>void}) {
@@ -2978,6 +3148,7 @@ export default function Dashboard() {
     sunat_centro: <SunatCentroView empresa={empresa} addToast={addToast} onNav={setActive}/>,
     descarga_masiva:<DescargaMasivaView empresa={empresa} addToast={addToast} onRefresh={refreshData} onSetPeriod={setPeriod} period={period}/>,
     buzon_sol:    <BuzonSOLView empresa={empresa} addToast={addToast}/>,
+    consultar_xml:<ConsultarXmlView empresa={empresa} addToast={addToast}/>,
     compras:      <DocTableView docs={compras} titulo="Compras — Comprobantes recibidos" sub="SUNAT/SIRE" addToast={addToast} onRefresh={refreshData} exportType="COMPRA" empresa={empresa} period={period}/>,
     ventas:       <DocTableView docs={ventas}  titulo="Ventas — Comprobantes emitidos"   sub="SUNAT/SIRE" addToast={addToast} onRefresh={refreshData} exportType="VENTA"  empresa={empresa} period={period}/>,
     documentos_xml:<DocumentosXmlView docs={docs} empresa={empresa} addToast={addToast} onRefresh={refreshData}/>,
