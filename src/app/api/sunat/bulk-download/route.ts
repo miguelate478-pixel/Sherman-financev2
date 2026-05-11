@@ -8,37 +8,48 @@ import { decrypt } from '@/lib/crypto';
 
 function getPeriods(from:string,to:string):string[]{const ps:string[]=[];let[y,m]=from.split('-').map(Number);const[ty,tm]=to.split('-').map(Number);while(y<ty||(y===ty&&m<=tm)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m++;if(m>12){m=1;y++;}}return ps;}
 
-// ─── CPE Token SOL (usa credenciales SOL del usuario, NO clientSecret) ───────
+// ─── CPE Token SOL ────────────────────────────────────────────────────────────
 const cpeTokenCache = new Map<string, { token: string; expiresAt: number }>();
 
-async function getSunatTokenSOL(ruc: string, solUser: string, solPass: string, clientId: string): Promise<string> {
+async function getSunatTokenSOL(
+  ruc: string,
+  solUser: string,
+  solPass: string,
+  clientId: string,
+  clientSecret?: string
+): Promise<string> {
   const key = `cpe-sol-${ruc}-${clientId}`;
   const cached = cpeTokenCache.get(key);
   if (cached && Date.now() < cached.expiresAt - 60000) return cached.token;
 
+  // Usar scope SIRE (igual que getSireToken del provider) — el scope CPE da "parametros invalidos"
+  const params: Record<string, string> = {
+    grant_type: 'password',
+    scope:      'https://api-sire.sunat.gob.pe',
+    client_id:  clientId,
+    username:   `${ruc}${solUser}`,
+    password:   solPass,
+  };
+  // client_secret requerido cuando está disponible
+  if (clientSecret) params.client_secret = clientSecret;
+
   const res = await fetch(`https://api-seguridad.sunat.gob.pe/v1/clientessol/${clientId}/oauth2/token/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'password',
-      scope:      'https://api-cpe.sunat.gob.pe',
-      client_id:  clientId,
-      username:   `${ruc}${solUser}`,
-      password:   solPass,
-    }),
+    body: new URLSearchParams(params),
     signal: AbortSignal.timeout(15000),
   });
-  
+
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Token SOL fallido ${res.status}: ${body.substring(0,300)}`);
+    throw new Error(`Token SOL fallido ${res.status}: ${body.substring(0, 300)}`);
   }
-  
+
   const data = await res.json() as { access_token?: string; expires_in?: number };
   if (!data.access_token) {
     throw new Error(`Token SOL fallido: ${JSON.stringify(data)}`);
   }
-  
+
   cpeTokenCache.set(key, { token: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 });
   console.log('[CPE-SOL] Token obtenido OK para RUC:', ruc, '| expires_in:', data.expires_in);
   return data.access_token;
@@ -279,7 +290,8 @@ export async function POST(req: NextRequest) {
                     company.ruc as string,
                     (cred?.solUser as string) || '',
                     solPass,
-                    clientId
+                    clientId,
+                    clientSecret ?? undefined
                   );
                   
                   // Para compras: el emisor es doc.rucEmisor, receptor es la empresa
@@ -706,7 +718,7 @@ export async function PUT(req: NextRequest) {
           }
         } else {
           const tokenSOL = await getSunatTokenSOL(
-            company.ruc as string, cred.solUser as string, solPass, clientId
+            company.ruc as string, cred.solUser as string, solPass, clientId, clientSecret ?? undefined
           );
           console.log(`[PARSE] Token CPE-SOL OK — procesando ${ventas.length} ventas`);
 

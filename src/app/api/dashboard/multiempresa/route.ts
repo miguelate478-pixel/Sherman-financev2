@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
       ),
       queryAll(
         `SELECT COUNT(*) as n, SUM(amount) as monto FROM cxp_records
-         WHERE "companyId"=$1 AND status='PENDIENTE' AND "dueDate" <= CURRENT_DATE`,
+         WHERE "companyId"=$1 AND status='PENDIENTE' AND "dueDate"::date <= CURRENT_DATE`,
         [cid]
       ),
       queryAll(

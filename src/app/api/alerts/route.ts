@@ -26,8 +26,8 @@ export async function GET(req: NextRequest) {
     if (companyId) {
       const [dets, cxps, cxcs, obs] = await Promise.all([
         queryAll(`SELECT COUNT(*) as n FROM detractions WHERE "companyId"=$1 AND status='PENDIENTE'`, [companyId]),
-        queryAll(`SELECT COUNT(*) as n FROM cxp_records WHERE "companyId"=$1 AND status='PENDIENTE' AND "dueDate" <= CURRENT_DATE + INTERVAL '3 days'`, [companyId]),
-        queryAll(`SELECT COUNT(*) as n FROM cxc_records WHERE "companyId"=$1 AND status='PENDIENTE' AND "dueDate" < CURRENT_DATE`, [companyId]),
+        queryAll(`SELECT COUNT(*) as n FROM cxp_records WHERE "companyId"=$1 AND status='PENDIENTE' AND "dueDate"::date <= CURRENT_DATE + INTERVAL '3 days'`, [companyId]),
+        queryAll(`SELECT COUNT(*) as n FROM cxc_records WHERE "companyId"=$1 AND status='PENDIENTE' AND "dueDate"::date < CURRENT_DATE`, [companyId]),
         queryAll(`SELECT COUNT(*) as n FROM documents WHERE "companyId"=$1 AND "sunatStatus"='OBSERVADO'`, [companyId]),
       ]);
       pendientes = {
