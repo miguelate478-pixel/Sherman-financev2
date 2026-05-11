@@ -244,10 +244,14 @@ export class DirectSunatProvider implements ISunatProvider {
     const esVentas = p.operation === 'VENTAS';
 
     // URLs confirmadas con el portal e-factura real:
-    // RVIE (ventas): /rvie/propuesta/web/propuesta/{periodo}/comprobantes ✅ (token API)
-    // RCE (compras): /rce/propuesta/web/propuesta/{periodo}/busqueda?codTipoOpe=1 ✅ (token portal)
+    // RVIE (ventas): /rvie/propuesta/web/propuesta/{periodo}/comprobantes ✅
+    // RCE (compras): /rce/propuesta/web/propuesta/{periodo}/busqueda?codTipoOpe=1 ✅
     const comprobantesUrls = esVentas
-      ? [`${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/comprobantes?codTipoOpe=1`]
+      ? [
+          `${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/comprobantes?codTipoOpe=1`,
+          `${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/comprobantes`,
+          `${SIRE_BASE}/rvie/propuesta/web/propuesta/${periodo}/busqueda?codTipoOpe=1`,
+        ]
       : [
           `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/busqueda?codTipoOpe=1`,
           `${SIRE_BASE}/rce/propuesta/web/propuesta/${periodo}/comprobantes`,
@@ -273,41 +277,35 @@ export class DirectSunatProvider implements ISunatProvider {
     if (!urlFound) {
       console.log(`[SIRE] Endpoint /comprobantes no disponible para ${p.operation} ${periodo}. Usando resumen CSV.`);
 
-      // Para RCE: usar el resumen CSV que sí está disponible con token de API
-      const resumenUrl = `https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rvierce/resumen/web/resumencomprobantes/${periodo}/1/1/exporta?codLibro=080000`;
+      // codLibro: 080000=compras(RCE), 140000=ventas(RVIE)
+      const codLibro = esVentas ? '140000' : '080000';
+      const resumenUrl = `https://api-sire.sunat.gob.pe/v1/contribuyente/migeigv/libros/rvierce/resumen/web/resumencomprobantes/${periodo}/1/1/exporta?codLibro=${codLibro}`;
       try {
         const resRes = await fetch(resumenUrl, { headers: this.sireHeaders(token), signal: AbortSignal.timeout(15000) });
         if (resRes.ok) {
           const rawBytes = await resRes.arrayBuffer();
-          // Decodificar bytes ASCII (el endpoint devuelve bytes como texto)
-          const bytes = new Uint8Array(rawBytes);
+          const textContent = new TextDecoder('utf-8').decode(new Uint8Array(rawBytes));
           let csvText = '';
-          // Si el contenido son números separados por newlines (bytes ASCII), decodificar
-          const textContent = new TextDecoder('utf-8').decode(bytes);
           if (/^\d+\n/.test(textContent.trim())) {
-            // Formato de bytes ASCII
             const byteNums = textContent.trim().split('\n').map(n => parseInt(n.trim())).filter(n => !isNaN(n));
             csvText = String.fromCharCode(...byteNums);
           } else {
             csvText = textContent;
           }
-          console.log(`[SIRE] Resumen CSV RCE:\n${csvText.substring(0, 500)}`);
+          console.log(`[SIRE] Resumen CSV ${p.operation}:\n${csvText.substring(0, 500)}`);
 
-          // Parsear CSV: Tipo,Total,BI,IGV,...,TotalCP
           const lines = csvText.split('\n').filter(l => l.trim() && !l.startsWith('Tipo') && !l.startsWith('TOTAL'));
           for (const line of lines) {
             const cols = line.split(',');
             if (cols.length < 2) continue;
-            const tipoDesc = cols[0].trim(); // "01-Factura"
+            const tipoDesc  = cols[0].trim();
             const totalDocs = parseInt(cols[1]) || 0;
             const biGravado = parseFloat(cols[2]) || 0;
-            const igv = parseFloat(cols[3]) || 0;
-            const totalCP = parseFloat(cols[cols.length - 1]) || 0;
-            const codTipo = tipoDesc.split('-')[0].trim().padStart(2, '0');
-
+            const igv       = parseFloat(cols[3]) || 0;
+            const totalCP   = parseFloat(cols[cols.length - 1]) || 0;
+            const codTipo   = tipoDesc.split('-')[0].trim().padStart(2, '0');
             if (totalDocs === 0) continue;
 
-            // Crear un documento resumen por tipo
             allDocuments.push({
               id:          `RESUMEN-${codTipo}-${periodo}`,
               ruc:         p.ruc,
@@ -317,14 +315,18 @@ export class DirectSunatProvider implements ISunatProvider {
               fecha:       `${p.period.substring(0,4)}-${p.period.substring(5,7)}-01`,
               total:       totalCP,
               moneda:      'PEN',
-              rsEmisor:    `${totalDocs} comprobantes tipo ${tipoDesc}`,
-              rucEmisor:   '',
-              rsReceptor:  p.ruc,
+              // Para ventas: emisor=empresa, receptor=desconocido
+              // Para compras: emisor=proveedor, receptor=empresa
+              rsEmisor:    esVentas ? p.ruc : `${totalDocs} comprobantes tipo ${tipoDesc}`,
+              rucEmisor:   esVentas ? p.ruc : '',
+              rsReceptor:  esVentas ? `${totalDocs} comprobantes tipo ${tipoDesc}` : p.ruc,
               rucReceptor: p.ruc,
               sunatStatus: 'ACEPTADO',
               cdrStatus:   'OK',
+              biGravadaDG: biGravado,
+              igvDG:       igv,
             });
-            console.log(`[SIRE] Resumen ${tipoDesc}: ${totalDocs} docs, BI=${biGravado}, IGV=${igv}, Total=${totalCP}`);
+            console.log(`[SIRE] Resumen ${p.operation} ${tipoDesc}: ${totalDocs} docs, BI=${biGravado}, IGV=${igv}, Total=${totalCP}`);
           }
         } else {
           console.log(`[SIRE] Resumen CSV HTTP ${resRes.status}`);
@@ -333,7 +335,7 @@ export class DirectSunatProvider implements ISunatProvider {
         console.error('[SIRE] Error obteniendo resumen CSV:', (e as Error).message);
       }
 
-      console.log(`[SIRE] Total resúmenes RCE: ${allDocuments.length}`);
+      console.log(`[SIRE] Total resúmenes ${p.operation}: ${allDocuments.length}`);
       return { period: p.period, operation: p.operation, docsFound: allDocuments.length, docsXml:0, docsPdf:0, docsCdr:0, errors:0, documents: allDocuments };
     }
 
@@ -383,19 +385,21 @@ export class DirectSunatProvider implements ISunatProvider {
           const igv    = Number(montos?.mtoIgvIpmDG ?? reg.mtoIGV ?? 0);
           const valNG  = Number(montos?.mtoValorAdqNG ?? 0);
 
-          // Para ventas: emisor=empresa, receptor=cliente
-          // Para compras (busqueda): proveedor en nomRazonSocialProveedor/numDocIdentidadProveedor
+          // Para ventas (RVIE): emisor=empresa, receptor=cliente
+          // Campos RVIE: numDocIdentidadCliente, nomRazonSocialCliente, numDocIdentidad (cliente)
+          // Para compras (RCE): proveedor en nomRazonSocialProveedor/numDocIdentidadProveedor
           const rucEmisor   = esVentas
             ? p.ruc
             : String(reg.numDocIdentidadProveedor ?? reg.numDocIdentidad ?? '');
           const rsEmisor    = esVentas
-            ? String(reg.nomRazonSocial ?? '')
+            ? p.ruc  // En RVIE el emisor es la propia empresa (su RUC)
             : String(reg.nomRazonSocialProveedor ?? reg.nomRazonSocialCliente ?? '');
+          // Para RVIE: el cliente puede tener RUC (numDocIdentidadCliente) o DNI (numDocIdentidad)
           const rucReceptor = esVentas
-            ? String(reg.numDocIdentidad ?? reg.numDocIdentidadProveedor ?? '')
+            ? String(reg.numDocIdentidadCliente ?? reg.numDocIdentidad ?? reg.numDocIdentidadProveedor ?? '')
             : p.ruc;
           const rsReceptor  = esVentas
-            ? String(reg.nomRazonSocialCliente ?? reg.nomRazonSocialProveedor ?? '')
+            ? String(reg.nomRazonSocialCliente ?? reg.nomRazonSocial ?? '')
             : String(reg.nomRazonSocial ?? '');
 
           allDocuments.push({
@@ -410,7 +414,10 @@ export class DirectSunatProvider implements ISunatProvider {
             rsEmisor,
             rucEmisor,
             rsReceptor,
-            rucReceptor: esVentas ? String(reg.numDocIdentidad ?? reg.numDocIdentidadProveedor ?? '') : p.ruc,
+            rucReceptor,
+            // Para ventas: numDocCliente = rucReceptor (para compatibilidad con bulk-download)
+            numDocCliente: esVentas ? rucReceptor : undefined,
+            razonSocialCliente: esVentas ? rsReceptor : undefined,
             sunatStatus: String(reg.codEstadoComprobante === '1' ? 'ACEPTADO' : 'OBSERVADO'),
             cdrStatus:   'OK',
             // Campos adicionales para Excel completo
