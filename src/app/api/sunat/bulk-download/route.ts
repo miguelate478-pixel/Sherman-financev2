@@ -159,6 +159,7 @@ export async function POST(req: NextRequest) {
     let lastError = '';
 
     let sireToken='';
+    let cpeTokenFailed = false; // Flag para no reintentar si CPE-SOL falla con 401
     try {
       sireToken = await sunat.getSireToken(
         company.ruc as string,
@@ -284,7 +285,7 @@ export async function POST(req: NextRequest) {
 
               // 2. Si no hay XML de SIRE, intentar descarga individual vía API CPE con token SOL
               console.log(`[BULK] includeDetails para ${docId} — xmlContent:${!!xmlContent} clientId:${!!clientId}`);
-              if (!xmlForLines && clientId && cred) {
+              if (!xmlForLines && clientId && cred && !cpeTokenFailed) {
                 try {
                   const tokenSOL = await getSunatTokenSOL(
                     company.ruc as string,
@@ -319,7 +320,13 @@ export async function POST(req: NextRequest) {
                     console.log(`[BULK] CPE-SOL XML no disponible para ${docId}: ${cpeResult.error}`);
                   }
                 } catch (cpeErr) {
-                  console.log(`[BULK] Error CPE-SOL para ${docId}: ${(cpeErr as Error).message}`);
+                  const errMsg = (cpeErr as Error).message;
+                  console.log(`[BULK] Error CPE-SOL para ${docId}: ${errMsg}`);
+                  // Si es 401 unauthorized, no reintentar para los demás documentos
+                  if (errMsg.includes('401') || errMsg.includes('unauthorized_client')) {
+                    cpeTokenFailed = true;
+                    console.log('[BULK] CPE-SOL 401 — clientId no autorizado para CPE. Registra credenciales CPE en SUNAT SOL → Empresas → Credenciales API SUNAT → Consulta Integrada CPE');
+                  }
                 }
               }
 

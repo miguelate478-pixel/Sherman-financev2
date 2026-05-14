@@ -271,14 +271,26 @@ export async function downloadXmlFromSunat(
           .find(b => b.textContent?.trim().toLowerCase().includes('consultar'));
       if (btn) (btn as HTMLElement).click();
     });
-    await new Promise(r => setTimeout(r, 5000));
 
-    // Verificar resultados
-    const hasResults = await targetFrame.evaluate(() => {
-      const body = document.body.textContent || '';
-      return !body.toLowerCase().includes('no se encontraron') &&
-             !body.toLowerCase().includes('sin resultados');
-    });
+    // Esperar resultado — máximo 30 segundos con logs cada 5s
+    log('Esperando resultado de consulta...');
+    let hasResults = false;
+    for (let i = 0; i < 6; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      log(`Esperando... ${(i+1)*5}s`);
+      hasResults = await targetFrame.evaluate(() => {
+        const body = document.body.textContent || '';
+        const noResults = body.toLowerCase().includes('no se encontraron') ||
+                          body.toLowerCase().includes('sin resultados') ||
+                          body.toLowerCase().includes('no existen');
+        // Verificar si hay modal o tabla de resultados
+        const hasModal = !!document.querySelector('ngb-modal-window, .modal-dialog, control-cpe-factura');
+        const hasTable = !!document.querySelector('table tbody tr, .resultado-consulta');
+        return !noResults && (hasModal || hasTable || body.includes('FJ88') || body.includes('30587'));
+      });
+      if (hasResults) { log('Resultado encontrado'); break; }
+      if (capturedXml) { log('XML ya capturado via intercepción'); break; }
+    }
 
     if (!hasResults) {
       return { xmlContent: null, error: 'Comprobante no encontrado en SUNAT', logs };
