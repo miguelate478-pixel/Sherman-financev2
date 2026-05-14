@@ -65,14 +65,14 @@ export async function GET(req: NextRequest) {
       companyId,
       documents: docs,
       financial: {
-        cxc: parseInt((cxc[0] as any)?.total || '0'),
-        cxp: parseInt((cxp[0] as any)?.total || '0'),
-        detracciones: parseInt((det[0] as any)?.total || '0'),
+        cxc: parseInt(String((cxc[0] as Record<string,string>)?.total || '0')),
+        cxp: parseInt(String((cxp[0] as Record<string,string>)?.total || '0')),
+        detracciones: parseInt(String((det[0] as Record<string,string>)?.total || '0')),
       },
       pending: {
-        ventasSinCxc: parseInt((ventasSinCxc[0] as any)?.total || '0'),
-        comprasSinCxp: parseInt((comprasSinCxp[0] as any)?.total || '0'),
-        comprasSinDet: parseInt((comprasSinDet[0] as any)?.total || '0'),
+        ventasSinCxc: parseInt(String((ventasSinCxc[0] as Record<string,string>)?.total || '0')),
+        comprasSinCxp: parseInt(String((comprasSinCxp[0] as Record<string,string>)?.total || '0')),
+        comprasSinDet: parseInt(String((comprasSinDet[0] as Record<string,string>)?.total || '0')),
       }
     });
     

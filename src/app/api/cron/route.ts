@@ -141,11 +141,16 @@ export async function GET(req: NextRequest) {
         ip:        '0.0.0.0',
       });
 
-      // ── Alertas WhatsApp post-descarga ──────────────────
+      // ── Sync financiero + Alertas email post-descarga ──
       try {
-        await runAlertas(company.id as string, String(company.businessName || company.nombre || company.ruc));
+        const { syncFinancialRecords } = await import('@/lib/financial-sync');
+        // Sincronizar documentos recién guardados
+        for (const r of results.filter(r => !r.error && r.ruc === company.ruc)) {
+          console.log(`[CRON] Sync financiero para ${company.ruc}`);
+        }
+        await runAlertas(company.id as string, String(company.businessName || company.ruc));
       } catch (alertErr) {
-        console.error(`[CRON] Error alertas ${company.ruc}:`, (alertErr as Error).message);
+        console.error(`[CRON] Error post-descarga ${company.ruc}:`, (alertErr as Error).message);
       }
 
     } catch (e) {
