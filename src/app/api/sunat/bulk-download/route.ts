@@ -2,11 +2,21 @@ import { NextRequest } from 'next/server';
 import { findCompanyById, findDocumentById, getCredentialByCompany, createBulkJob, createBulkJobPeriod, updateBulkJob, updateBulkJobPeriod, getBulkJobs, createDocument, createDocumentLine, updateDocument, createAuditLog, getDocuments } from '@/lib/db';
 import { getUser } from '@/lib/auth';
 import { ok, err, unauthorized, getIP } from '@/lib/response';
-import { getSunatProvider, getStoragePath } from '@/lib/providers/sunat';
+import { getSunatProvider, getStoragePath, saveFile } from '@/lib/providers/sunat';
 import { getAiProvider } from '@/lib/providers/ai';
 import { decrypt } from '@/lib/crypto';
 
 function getPeriods(from:string,to:string):string[]{const ps:string[]=[];let[y,m]=from.split('-').map(Number);const[ty,tm]=to.split('-').map(Number);while(y<ty||(y===ty&&m<=tm)){ps.push(`${y}-${String(m).padStart(2,'0')}`);m++;if(m>12){m=1;y++;}}return ps;}
+
+// Scraper Puppeteer lazy import
+type ScraperFn = typeof import('@/lib/providers/sunat-scraper').downloadXmlFromSunat;
+let _scraperFn: ScraperFn | null = null;
+async function getScraper(): Promise<ScraperFn> {
+  if (_scraperFn) return _scraperFn;
+  const mod = await import('@/lib/providers/sunat-scraper');
+  _scraperFn = mod.downloadXmlFromSunat;
+  return _scraperFn;
+}
 
 // ─── CPE Token SOL ────────────────────────────────────────────────────────────
 const cpeTokenCache = new Map<string, { token: string; expiresAt: number }>();
@@ -114,8 +124,10 @@ export async function POST(req: NextRequest) {
   if (!user) return unauthorized();
   try {
     const body = await req.json();
-    const { companyId, operation, periodFrom, periodTo, documentTypes, fileTypes, includeDetails, classifyWithAI } = body;
+    const { companyId, operation, periodFrom, periodTo, documentTypes, fileTypes, includeDetails, classifyWithAI, useScraperFallback } = body;
     if (!companyId||!periodFrom||!periodTo) return err('companyId, periodFrom y periodTo requeridos');
+    const scraperEnabled = !!useScraperFallback && process.env.SUNAT_PROVIDER === 'direct';
+    let scraperUsed = 0, scraperOk = 0, scraperFail = 0;
 
     const company = await findCompanyById(companyId);
     if (!company) return err('Empresa no encontrada');
@@ -330,12 +342,45 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // 3. Si CPE-SOL también falla, marcar como SIN_XML (ya no usamos browser ni HTTP cookies)
-              if (!xmlForLines && op === 'COMPRAS' && cred) {
-                console.log(`[BULK] ${docId}: XML no disponible via CPE-SOL — marcando como SIN_XML`);
+              // 3. SCRAPER PUPPETEER — ultimo fallback, solo COMPRAS, solo si useScraperFallback=true
+              if (!xmlForLines && op === 'COMPRAS' && cred && scraperEnabled) {
+                scraperUsed++;
+                console.log('[BULK] Scraper Puppeteer para ' + docId + '...');
+                try {
+                  const scraper = await getScraper();
+                  const scraperResult = await scraper(
+                    { ruc: company.ruc as string, solUser: (cred.solUser as string) || '', solPass },
+                    { rucEmisor: doc.rucEmisor, tipoComprobante: doc.tipo, serie: doc.serie, numero: doc.numero }
+                  );
+                  if (scraperResult.xmlContent) {
+                    xmlForLines = scraperResult.xmlContent;
+                    scraperOk++;
+                    console.log('[BULK] Scraper OK ' + docId + ': ' + xmlForLines.length + ' bytes');
+                    try {
+                      saveFile(storePath, 'document.xml', xmlForLines);
+                      hasXml = true;
+                      xmlPath = storePath + '/document.xml';
+                      docHash = (await import('crypto')).createHash('sha256').update(xmlForLines).digest('hex');
+                      await updateDocument(docId, { hasXml: true, xmlPath, hashSha256: docHash });
+                    } catch (saveErr) {
+                      console.error('[BULK] No se pudo guardar XML scraper:', (saveErr as Error).message);
+                    }
+                  } else {
+                    scraperFail++;
+                    console.log('[BULK] Scraper sin XML ' + docId + ': ' + scraperResult.error);
+                  }
+                } catch (scrErr) {
+                  scraperFail++;
+                  console.error('[BULK] Scraper fallo ' + docId + ':', (scrErr as Error).message);
+                }
               }
 
-              // 4. Parsear XML y guardar líneas
+              // 4. Si todo fallo, log SIN_XML
+              if (!xmlForLines && op === 'COMPRAS' && cred) {
+                console.log('[BULK] ' + docId + ': XML no disponible (SIRE+CPE' + (scraperEnabled ? '+scraper' : '') + ') - SIN_XML');
+              }
+
+              // 5. Parsear XML y guardar líneas
               if (xmlForLines) {
                 try {
                   const { parseXmlUbl } = await import('@/lib/xml-parser');
@@ -402,8 +447,8 @@ export async function POST(req: NextRequest) {
 
     const finalStatus=totalErrors>0?'COMPLETADO_CON_ERRORES':'COMPLETADO';
     await updateBulkJob(jobId,{status:finalStatus,docsFound:totalDocs,docsXml:totalXml,docsPdf:totalPdf,docsCdr:totalCdr,errors:totalErrors,completedAt:new Date().toISOString()});
-    await createAuditLog({userId:user.sub,userEmail:user.email,userRole:user.role,action:'BULK_DOWNLOAD_COMPLETADO',object:`${periodFrom}→${periodTo} ${operation} ${totalDocs}docs`,ip:getIP(req)});
-    return ok({jobId,status:finalStatus,totalDocs,totalXml,totalPdf,totalCdr,totalErrors,lastError:lastError||undefined});
+    await createAuditLog({userId:user.sub,userEmail:user.email,userRole:user.role,action:'BULK_DOWNLOAD_COMPLETADO',object:periodFrom+'->'+periodTo+' '+operation+' '+totalDocs+'docs'+(scraperEnabled?' scraper:'+scraperOk+'/'+scraperUsed:''),ip:getIP(req)});
+    return ok({jobId,status:finalStatus,totalDocs,totalXml,totalPdf,totalCdr,totalErrors,lastError:lastError||undefined,scraper:scraperEnabled?{used:scraperUsed,ok:scraperOk,failed:scraperFail}:undefined});
     } catch(e) {
       console.error('[BULK] Error general:', (e as Error).message);
       return err(`Error: ${(e as Error).message}`,500);

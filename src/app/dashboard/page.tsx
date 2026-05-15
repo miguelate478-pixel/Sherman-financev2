@@ -1061,11 +1061,11 @@ function DashView({docs,movs,onNav,empresa,period,alerts}:{docs:Doc[];movs:BankM
 //  DESCARGA MASIVA — Módulo principal
 // ══════════════════════════════════════════════════════════
 function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globalPeriod}:{empresa:Company|null;addToast:(m:string,t?:ToastType)=>void;onRefresh:()=>void;onSetPeriod:(p:string)=>void;period:string}) {
-  const [cfg,setCfg]=useState({op:'PURCHASES',periodFrom:globalPeriod,periodTo:globalPeriod,docTypes:['01','03','07','08'],fileTypes:['XML','PDF','CDR'],includeDetails:true,classifyAI:true});
+  const [cfg,setCfg]=useState({op:'PURCHASES',periodFrom:globalPeriod,periodTo:globalPeriod,docTypes:['01','03','07','08'],fileTypes:['XML','PDF','CDR'],includeDetails:true,classifyAI:true,useScraperFallback:false});
   const [running,setRunning]=useState(false);
   const [progress,setProgress]=useState(0);
   const [logs,setLogs]=useState<{m:string;ts:string;ok:boolean}[]>([]);
-  const [result,setResult]=useState<{totalDocs:number;totalXml:number;totalPdf:number;totalCdr:number;totalErrors:number}|null>(null);
+  const [result,setResult]=useState<{totalDocs:number;totalXml:number;totalPdf:number;totalCdr:number;totalErrors:number;scraper?:{used:number;ok:number;failed:number}}|null>(null);
   const logsRef=useRef<HTMLDivElement>(null);
   const addLog=(m:string,ok=true)=>{setLogs(p=>[...p,{m,ts:new Date().toLocaleTimeString('es-PE'),ok}]);setTimeout(()=>{if(logsRef.current)logsRef.current.scrollTop=logsRef.current.scrollHeight;},40);};
 
@@ -1102,6 +1102,7 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
           addLog(`[JOB-${p}-${op}] Parseando XML UBL 2.1 — cabecera + líneas...`);await sleep(400);
           addLog(`[JOB-${p}-${op}] Extrayendo conceptos/descripciones por línea...`);await sleep(300);
           if(cfg.classifyAI){addLog(`[JOB-${p}-${op}] Clasificando cuentas PCGE + centros de costo con IA...`);await sleep(500);}
+          if(cfg.useScraperFallback && op==='COMPRAS'){addLog(`[JOB-${p}-${op}] 🤖 Scraper Puppeteer listo como fallback (compras sin XML via API)`);await sleep(200);}
         }
         addLog(`✓ [JOB-${p}-${op}] Completado`);
         setProgress(15+Math.round(85*((i*ops.length+j+1)/totalJobs)));
@@ -1109,10 +1110,12 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
     }
     addLog('Enviando a Bandeja Contable...');await sleep(300);
     addLog('Preparando lote para CONCAR SQL...');await sleep(300);
-    const d=await API.bulkDownload({companyId:empresa.id,operation:cfg.op,periodFrom:cfg.periodFrom,periodTo:cfg.periodTo,documentTypes:cfg.docTypes,fileTypes:cfg.fileTypes,includeDetails:cfg.includeDetails,classifyWithAI:cfg.classifyAI});
+    const d=await API.bulkDownload({companyId:empresa.id,operation:cfg.op,periodFrom:cfg.periodFrom,periodTo:cfg.periodTo,documentTypes:cfg.docTypes,fileTypes:cfg.fileTypes,includeDetails:cfg.includeDetails,classifyWithAI:cfg.classifyAI,useScraperFallback:cfg.useScraperFallback});
     setRunning(false);setProgress(100);
     if(d.ok){
       setResult(d.data);addLog('✅ Proceso completado exitosamente');addToast('Descarga masiva completada','success');onSetPeriod(cfg.periodFrom);
+      // Mostrar stats del scraper si se usó
+      if(d.data?.scraper){const s=d.data.scraper;addLog(`🤖 Scraper Puppeteer: ${s.ok}/${s.used} XMLs descargados (${s.failed} fallaron)`);}
       // ── Auto-sync módulos financieros ──
       addLog('🔄 Sincronizando módulos financieros (CXC/CXP/Detracciones)...');
       try {
@@ -1184,6 +1187,14 @@ function DescargaMasivaView({empresa,addToast,onRefresh,onSetPeriod,period:globa
               <input type="checkbox" checked={cfg[k as 'includeDetails'|'classifyAI']} onChange={e=>setCfg(p=>({...p,[k]:e.target.checked}))} style={{accentColor:C.blue}}/>{l}
             </label>
           ))}
+          {/* Scraper fallback opt-in */}
+          <label style={{display:'flex',alignItems:'flex-start',gap:8,fontSize:12,cursor:'pointer',marginBottom:8,padding:'8px',background:cfg.useScraperFallback?C.amberL:'transparent',borderRadius:6,border:`1px solid ${cfg.useScraperFallback?C.amberM:'transparent'}`}}>
+            <input type="checkbox" checked={cfg.useScraperFallback} onChange={e=>setCfg(p=>({...p,useScraperFallback:e.target.checked}))} style={{accentColor:C.amber,marginTop:2}}/>
+            <div>
+              <div style={{fontWeight:600}}>🤖 Scraper Puppeteer (fallback)</div>
+              <div style={{fontSize:10,color:C.t4,marginTop:2,lineHeight:1.4}}>Si SIRE y CPE-SOL no tienen el XML, abre SUNAT SOL en background y descarga el XML factura por factura. Solo compras. ~30s extra por factura.</div>
+            </div>
+          </label>
           <div style={{background:C.blueL,borderRadius:8,padding:'10px',fontSize:11,color:C.blue,marginBottom:'1rem'}}>
             <div style={{fontWeight:700,marginBottom:4}}>Empresa activa:</div>
             <div style={{fontFamily:'JetBrains Mono,monospace',marginBottom:2}}>{empresa?.ruc||'—'}</div>
